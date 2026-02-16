@@ -3,11 +3,29 @@ import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
 
-import { PIPELINE_WORKSPACE_ROOT, TARGET_WORKSPACE_DIR } from "./constants.mjs";
-import { resolveClaudeArgsForVerbosity } from "./cli.mjs";
-import { debugLog, sanitizeIdentifier } from "./utils.mjs";
+import { PIPELINE_WORKSPACE_ROOT, TARGET_WORKSPACE_DIR } from "./constants.js";
+import { resolveClaudeArgsForVerbosity } from "./cli.js";
+import type {
+  ClaudeProcessResult,
+  PipelineEventName,
+  PipelineEventPayloadMap,
+  PipelineExecutionResult,
+  PipelinePlan,
+  PipelineResult,
+  PipelineStage,
+  PipelineStageResult,
+  PipelineTask,
+  PipelineTaskResult,
+  RunClaudeProcessOptions,
+  StageExecutionOutcome,
+  TaskStatus,
+} from "./types.js";
+import { debugLog, isPlainObject, sanitizeIdentifier } from "./utils.js";
 
-function emitPipelineEvent(event, payload = {}) {
+function emitPipelineEvent<TEvent extends PipelineEventName>(
+  event: TEvent,
+  payload: PipelineEventPayloadMap[TEvent],
+): void {
   console.log(
     JSON.stringify({
       type: "pipeline_event",
@@ -17,7 +35,7 @@ function emitPipelineEvent(event, payload = {}) {
   );
 }
 
-function applyReadOnlyPermissions(rootDir) {
+function applyReadOnlyPermissions(rootDir: string): void {
   const entries = fs.readdirSync(rootDir, { withFileTypes: true });
   for (const entry of entries) {
     const entryPath = path.join(rootDir, entry.name);
@@ -33,7 +51,7 @@ function applyReadOnlyPermissions(rootDir) {
   fs.chmodSync(rootDir, 0o555);
 }
 
-function prepareTaskWorkspace(planRunID, stageID, task) {
+function prepareTaskWorkspace(planRunID: string, stageID: string, task: PipelineTask): string {
   if (task.workspace === "shared") {
     return TARGET_WORKSPACE_DIR;
   }
@@ -64,30 +82,34 @@ function prepareTaskWorkspace(planRunID, stageID, task) {
   return targetDir;
 }
 
-export function runClaudeProcess(args, options = {}) {
+export function runClaudeProcess(
+  args: readonly string[],
+  options: RunClaudeProcessOptions = {},
+): Promise<ClaudeProcessResult> {
   const { onStdoutLine, ...spawnOptions } = options;
-  const hasStdoutHook = typeof onStdoutLine === "function";
+  const stdoutHook = typeof onStdoutLine === "function" ? onStdoutLine : null;
+  const hasStdoutHook = stdoutHook !== null;
 
-  return new Promise((resolve, reject) => {
-    const child = spawn("claude", args, {
+  return new Promise<ClaudeProcessResult>((resolve, reject) => {
+    const child = spawn("claude", [...args], {
       stdio: hasStdoutHook ? ["inherit", "pipe", "pipe"] : "inherit",
       ...spawnOptions,
     });
 
     let stdoutBuffer = "";
 
-    const flushStdoutBuffer = () => {
-      if (!hasStdoutHook || !stdoutBuffer) {
+    const flushStdoutBuffer = (): void => {
+      if (!stdoutHook || !stdoutBuffer) {
         return;
       }
-      onStdoutLine(stdoutBuffer.replace(/\r$/, ""));
+      stdoutHook(stdoutBuffer.replace(/\r$/, ""));
       process.stdout.write(stdoutBuffer);
       stdoutBuffer = "";
     };
 
     if (hasStdoutHook && child.stdout) {
       child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => {
+      child.stdout.on("data", (chunk: string) => {
         stdoutBuffer += chunk;
         while (true) {
           const lineEndIndex = stdoutBuffer.indexOf("\n");
@@ -99,7 +121,7 @@ export function runClaudeProcess(args, options = {}) {
           stdoutBuffer = stdoutBuffer.slice(lineEndIndex + 1);
 
           const line = lineWithNewline.slice(0, -1).replace(/\r$/, "");
-          onStdoutLine(line);
+          stdoutHook(line);
           process.stdout.write(lineWithNewline);
         }
       });
@@ -107,12 +129,12 @@ export function runClaudeProcess(args, options = {}) {
 
     if (hasStdoutHook && child.stderr) {
       child.stderr.setEncoding("utf8");
-      child.stderr.on("data", (chunk) => {
+      child.stderr.on("data", (chunk: string) => {
         process.stderr.write(chunk);
       });
     }
 
-    child.on("error", (error) => {
+    child.on("error", (error: Error) => {
       reject(new Error(`Failed to start claude: ${error.message}`));
     });
 
@@ -126,31 +148,41 @@ export function runClaudeProcess(args, options = {}) {
   });
 }
 
-function extractSystemInitSessionID(line) {
+function extractSystemInitSessionID(line: string): string {
   const trimmed = String(line ?? "").trim();
   if (!trimmed || !trimmed.startsWith("{")) {
     return "";
   }
 
   try {
-    const payload = JSON.parse(trimmed);
-    if (payload?.type !== "system" || payload?.subtype !== "init") {
+    const payload = JSON.parse(trimmed) as unknown;
+    if (!isPlainObject(payload)) {
       return "";
     }
-    if (typeof payload.session_id !== "string") {
+    if (payload.type !== "system" || payload.subtype !== "init") {
       return "";
     }
-    return payload.session_id.trim();
+
+    const sessionID = payload.session_id;
+    if (typeof sessionID !== "string") {
+      return "";
+    }
+    return sessionID.trim();
   } catch {
     return "";
   }
 }
 
-function currentTimestamp() {
+function currentTimestamp(): string {
   return new Date().toISOString();
 }
 
-async function executePipelineTask(planRunID, stage, task, debugEnabled) {
+async function executePipelineTask(
+  planRunID: string,
+  stage: PipelineStage,
+  task: PipelineTask,
+  debugEnabled: boolean,
+): Promise<PipelineTaskResult> {
   const startedAt = new Date();
   const taskWorkspaceDir = prepareTaskWorkspace(planRunID, stage.id, task);
 
@@ -180,7 +212,7 @@ async function executePipelineTask(planRunID, stage, task, debugEnabled) {
   ];
 
   try {
-    const boundSessionIDs = new Set();
+    const boundSessionIDs = new Set<string>();
     const result = await runClaudeProcess(claudeArgs, {
       cwd: taskWorkspaceDir,
       onStdoutLine: (line) => {
@@ -196,9 +228,10 @@ async function executePipelineTask(planRunID, stage, task, debugEnabled) {
         });
       },
     });
+
     const finishedAt = new Date();
     const isError = Boolean(result.signal) || result.code !== 0;
-    const taskResult = {
+    const taskResult: PipelineTaskResult = {
       stage_id: stage.id,
       task_id: task.id,
       status: isError ? "error" : "success",
@@ -222,10 +255,10 @@ async function executePipelineTask(planRunID, stage, task, debugEnabled) {
 
     emitPipelineEvent("task_finish", taskResult);
     return taskResult;
-  } catch (error) {
+  } catch (error: unknown) {
     const finishedAt = new Date();
     const message = error instanceof Error ? error.message : String(error);
-    const taskResult = {
+    const taskResult: PipelineTaskResult = {
       stage_id: stage.id,
       task_id: task.id,
       status: "error",
@@ -248,8 +281,12 @@ async function executePipelineTask(planRunID, stage, task, debugEnabled) {
   }
 }
 
-async function executeSequentialStage(planRunID, stage, debugEnabled) {
-  const taskResults = [];
+async function executeSequentialStage(
+  planRunID: string,
+  stage: PipelineStage,
+  debugEnabled: boolean,
+): Promise<StageExecutionOutcome> {
+  const taskResults: PipelineTaskResult[] = [];
   let stopAfterStage = false;
 
   for (const task of stage.tasks) {
@@ -268,14 +305,18 @@ async function executeSequentialStage(planRunID, stage, debugEnabled) {
   };
 }
 
-async function executeParallelStage(planRunID, stage, debugEnabled) {
-  const taskResults = new Array(stage.tasks.length);
+async function executeParallelStage(
+  planRunID: string,
+  stage: PipelineStage,
+  debugEnabled: boolean,
+): Promise<StageExecutionOutcome> {
+  const taskResults: Array<PipelineTaskResult | undefined> = new Array(stage.tasks.length);
   let nextIndex = 0;
   let stopAfterStage = false;
 
   const workerCount = Math.max(1, Math.min(stage.maxParallel, stage.tasks.length));
 
-  const worker = async () => {
+  const worker = async (): Promise<void> => {
     while (true) {
       if (stopAfterStage) {
         return;
@@ -288,6 +329,10 @@ async function executeParallelStage(planRunID, stage, debugEnabled) {
       }
 
       const task = stage.tasks[currentIndex];
+      if (!task) {
+        return;
+      }
+
       const taskResult = await executePipelineTask(planRunID, stage, task, debugEnabled);
       taskResults[currentIndex] = taskResult;
 
@@ -300,16 +345,19 @@ async function executeParallelStage(planRunID, stage, debugEnabled) {
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   return {
-    taskResults: taskResults.filter(Boolean),
+    taskResults: taskResults.filter((item): item is PipelineTaskResult => Boolean(item)),
     stopAfterStage,
   };
 }
 
-export async function executePipelinePlan(plan, debugEnabled) {
+export async function executePipelinePlan(
+  plan: PipelinePlan,
+  debugEnabled: boolean,
+): Promise<PipelineExecutionResult> {
   const planStartedAt = Date.now();
   const planRunID = `${Date.now()}-${process.pid}`;
-  const stageResults = [];
-  const allTaskResults = [];
+  const stageResults: PipelineStageResult[] = [];
+  const allTaskResults: PipelineTaskResult[] = [];
 
   emitPipelineEvent("plan_start", {
     version: plan.version,
@@ -325,6 +373,10 @@ export async function executePipelinePlan(plan, debugEnabled) {
     }
 
     const stage = plan.stages[stageIndex];
+    if (!stage) {
+      continue;
+    }
+
     const stageStartedAt = Date.now();
 
     emitPipelineEvent("stage_start", {
@@ -343,10 +395,11 @@ export async function executePipelinePlan(plan, debugEnabled) {
     const stageFinishedAt = Date.now();
     const failedTasks = outcome.taskResults.filter((item) => item.status === "error");
 
-    const stageRecord = {
+    const stageStatus: TaskStatus = failedTasks.length > 0 ? "error" : "success";
+    const stageRecord: PipelineStageResult = {
       stage_id: stage.id,
       mode: stage.mode,
-      status: failedTasks.length > 0 ? "error" : "success",
+      status: stageStatus,
       task_count: stage.tasks.length,
       completed_tasks: outcome.taskResults.length,
       failed_tasks: failedTasks.length,
@@ -364,7 +417,7 @@ export async function executePipelinePlan(plan, debugEnabled) {
   }
 
   const failedTaskCount = allTaskResults.filter((item) => item.status === "error").length;
-  const status = failedTaskCount > 0 ? "error" : "success";
+  const status: TaskStatus = failedTaskCount > 0 ? "error" : "success";
   const planFinishedAt = Date.now();
 
   emitPipelineEvent("plan_finish", {
@@ -377,7 +430,7 @@ export async function executePipelinePlan(plan, debugEnabled) {
     failed_task_count: failedTaskCount,
   });
 
-  const pipelineResult = {
+  const pipelineResult: PipelineResult = {
     type: "pipeline_result",
     version: plan.version,
     status,

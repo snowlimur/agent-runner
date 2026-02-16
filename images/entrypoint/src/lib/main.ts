@@ -1,18 +1,23 @@
 import process from "node:process";
 
-import { resolveEntrypointArgs, resolvePromptRunOptions } from "./cli.mjs";
-import { executePipelinePlan, runClaudeProcess } from "./pipeline-executor.mjs";
-import { resolvePipelinePlan } from "./pipeline-plan.mjs";
+import { resolveEntrypointArgs, resolvePromptRunOptions } from "./cli.js";
+import { installDinDSignalHandlers, startDinD, stopDinD } from "./dind.js";
+import { executePipelinePlan, runClaudeProcess } from "./pipeline-executor.js";
+import { resolvePipelinePlan } from "./pipeline-plan.js";
+import type { ClaudeProcessResult, DinDRuntime, Model } from "./types.js";
+import { debugLog, isTruthyEnv } from "./utils.js";
 import {
   configureGit,
   ensureGitHubAuthAndSetupGit,
   prepareWorkspaceFromReadOnlySource,
   resolveUsername,
-} from "./workspace-git.mjs";
-import { installDinDSignalHandlers, startDinD, stopDinD } from "./dind.mjs";
-import { debugLog, isTruthyEnv } from "./utils.mjs";
+} from "./workspace-git.js";
 
-async function runSinglePrompt(model, taskArgs, debugEnabled) {
+async function runSinglePrompt(
+  model: Model,
+  taskArgs: readonly string[],
+  debugEnabled: boolean,
+): Promise<ClaudeProcessResult> {
   const { prompt, claudeArgs } = resolvePromptRunOptions(taskArgs);
   debugLog(debugEnabled, `Running provided task with model ${model}: ${prompt}`);
 
@@ -28,12 +33,12 @@ async function runSinglePrompt(model, taskArgs, debugEnabled) {
   return result;
 }
 
-async function runInteractive(debugEnabled) {
+async function runInteractive(debugEnabled: boolean): Promise<ClaudeProcessResult> {
   debugLog(debugEnabled, "Starting interactive session...");
   return runClaudeProcess(["--dangerously-skip-permissions"]);
 }
 
-export async function runEntrypoint() {
+export async function runEntrypoint(): Promise<void> {
   const args = resolveEntrypointArgs(process.argv.slice(2));
   const { debugEnabled, model, taskArgs } = args;
 
@@ -45,7 +50,7 @@ export async function runEntrypoint() {
   ensureGitHubAuthAndSetupGit(debugEnabled);
   configureGit();
 
-  let dindRuntime = null;
+  let dindRuntime: DinDRuntime | null = null;
   if (isTruthyEnv(process.env.ENABLE_DIND)) {
     dindRuntime = startDinD(debugEnabled);
     installDinDSignalHandlers(() => {
@@ -65,6 +70,7 @@ export async function runEntrypoint() {
       process.kill(process.pid, pipelineResult.signal);
       return;
     }
+
     process.exitCode = pipelineResult.exitCode;
     return;
   }
@@ -75,6 +81,7 @@ export async function runEntrypoint() {
       process.kill(process.pid, result.signal);
       return;
     }
+
     process.exitCode = result.code;
     return;
   }
@@ -84,5 +91,6 @@ export async function runEntrypoint() {
     process.kill(process.pid, interactiveResult.signal);
     return;
   }
+
   process.exitCode = interactiveResult.code;
 }

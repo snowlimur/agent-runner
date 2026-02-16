@@ -1,6 +1,14 @@
 import { Command, Option } from "commander";
 
-function buildCliProgram() {
+import type { EntrypointArgs, Model, PromptRunOptions, Verbosity } from "./types.js";
+
+interface CliOptions {
+  debug?: boolean;
+  model?: string;
+  pipeline?: string;
+}
+
+function buildCliProgram(): Command {
   const program = new Command();
 
   program
@@ -22,23 +30,33 @@ function buildCliProgram() {
   return program;
 }
 
-export function resolveEntrypointArgs(rawArgs) {
+function normalizeModel(value: unknown): Model {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "sonnet" || normalized === "opus") {
+    return normalized;
+  }
+  return "opus";
+}
+
+export function resolveEntrypointArgs(rawArgs: readonly string[]): EntrypointArgs {
   const program = buildCliProgram();
   program.parse(["node", "entrypoint", ...rawArgs], { from: "node" });
 
-  const options = program.opts();
-  return {
+  const options = program.opts<CliOptions>();
+  const taskArgs = program.args.map((arg) => String(arg));
+  const baseArgs: EntrypointArgs = {
     debugEnabled: Boolean(options.debug),
-    model: options.model,
-    taskArgs: program.args,
-    pipelinePath: options.pipeline,
+    model: normalizeModel(options.model),
+    taskArgs,
   };
+
+  return typeof options.pipeline === "string" ? { ...baseArgs, pipelinePath: options.pipeline } : baseArgs;
 }
 
-export function resolvePromptRunOptions(args) {
+export function resolvePromptRunOptions(args: readonly string[]): PromptRunOptions {
   let verbosityLevel = 0;
   let parseFlags = true;
-  const promptParts = [];
+  const promptParts: string[] = [];
 
   for (const arg of args) {
     if (parseFlags && arg === "--") {
@@ -64,30 +82,15 @@ export function resolvePromptRunOptions(args) {
     throw new Error("Prompt is empty. Pass prompt text after -v/-vv.");
   }
 
-  if (verbosityLevel === 2) {
-    return {
-      prompt,
-      verbosity: "vv",
-      claudeArgs: ["--verbose", "--output-format", "stream-json"],
-    };
-  }
-
-  if (verbosityLevel === 1) {
-    return {
-      prompt,
-      verbosity: "v",
-      claudeArgs: ["--output-format", "json"],
-    };
-  }
-
+  const verbosity: Verbosity = verbosityLevel === 2 ? "vv" : verbosityLevel === 1 ? "v" : "text";
   return {
     prompt,
-    verbosity: "text",
-    claudeArgs: ["--output-format", "text"],
+    verbosity,
+    claudeArgs: resolveClaudeArgsForVerbosity(verbosity),
   };
 }
 
-export function resolveClaudeArgsForVerbosity(verbosity) {
+export function resolveClaudeArgsForVerbosity(verbosity: Verbosity): readonly string[] {
   if (verbosity === "vv") {
     return ["--verbose", "--output-format", "stream-json"];
   }

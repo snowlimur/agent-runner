@@ -74,13 +74,9 @@ RUN printf '{\n  "hasCompletedOnboarding": true,\n  "theme": "dark"\n}\n' > /hom
 
 # Install entrypoint runtime dependencies.
 WORKDIR /opt/entrypoint
-COPY entrypoint/package.json entrypoint/package-lock.json ./
-RUN npm ci --omit=dev
-
-# Copy entrypoint script and modular runtime files
-COPY entrypoint/entrypoint.mjs ./entrypoint.mjs
-COPY entrypoint/lib ./lib
-RUN chmod +x ./entrypoint.mjs
+COPY entrypoint/package.json entrypoint/package-lock.json entrypoint/tsconfig.json ./
+COPY entrypoint/src ./src
+RUN npm ci && npm run build && npm prune --omit=dev
 
 USER claude
 WORKDIR /workspace
@@ -97,4 +93,4 @@ ENV DIND_STARTUP_TIMEOUT_SEC="45"
 ENV CI=true
 ENV TERM=xterm-256color
 
-ENTRYPOINT ["/opt/entrypoint/entrypoint.mjs"]
+ENTRYPOINT ["node", "/opt/entrypoint/dist/entrypoint.js"]

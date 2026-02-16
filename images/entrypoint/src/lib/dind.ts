@@ -9,7 +9,8 @@ import {
   DIND_LOG_TAIL_LIMIT,
   DIND_PID_FILE,
   DIND_SOCKET_PATH,
-} from "./constants.mjs";
+} from "./constants.js";
+import type { DinDRuntime } from "./types.js";
 import {
   debugLog,
   firstNonEmptyEnv,
@@ -17,9 +18,9 @@ import {
   parsePositiveInteger,
   runSync,
   sleepMs,
-} from "./utils.mjs";
+} from "./utils.js";
 
-function appendLogTail(current, chunk) {
+function appendLogTail(current: string, chunk: string): string {
   const next = `${current}${chunk}`;
   if (next.length <= DIND_LOG_TAIL_LIMIT) {
     return next;
@@ -27,12 +28,13 @@ function appendLogTail(current, chunk) {
   return next.slice(next.length - DIND_LOG_TAIL_LIMIT);
 }
 
-function readDockerdPid() {
+function readDockerdPid(): number | null {
   try {
     const raw = fs.readFileSync(DIND_PID_FILE, "utf8").trim();
     if (!raw) {
       return null;
     }
+
     const pid = Number.parseInt(raw, 10);
     if (!Number.isFinite(pid) || pid <= 0) {
       return null;
@@ -43,7 +45,7 @@ function readDockerdPid() {
   }
 }
 
-function processExists(pid) {
+function processExists(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) {
     return false;
   }
@@ -56,7 +58,7 @@ function processExists(pid) {
   }
 }
 
-function canTalkToDocker() {
+function canTalkToDocker(): boolean {
   try {
     runSync("docker", ["info"], { stdio: "ignore" });
     return true;
@@ -65,7 +67,7 @@ function canTalkToDocker() {
   }
 }
 
-function launchDockerd(debugEnabled, storageDriver) {
+function launchDockerd(debugEnabled: boolean, storageDriver: string): DinDRuntime {
   let logTail = "";
   const dockerdArgs = [
     "-n",
@@ -80,21 +82,21 @@ function launchDockerd(debugEnabled, storageDriver) {
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
 
-  child.stdout.on("data", (chunk) => {
+  child.stdout.on("data", (chunk: string) => {
     logTail = appendLogTail(logTail, chunk);
     if (debugEnabled) {
       process.stdout.write(`[dockerd] ${chunk}`);
     }
   });
 
-  child.stderr.on("data", (chunk) => {
+  child.stderr.on("data", (chunk: string) => {
     logTail = appendLogTail(logTail, chunk);
     if (debugEnabled) {
       process.stderr.write(`[dockerd] ${chunk}`);
     }
   });
 
-  child.on("error", (error) => {
+  child.on("error", (error: Error) => {
     logTail = appendLogTail(logTail, `\nspawn error: ${error.message}\n`);
   });
 
@@ -105,7 +107,7 @@ function launchDockerd(debugEnabled, storageDriver) {
   };
 }
 
-function waitForDockerReady(runtime, timeoutSeconds) {
+function waitForDockerReady(runtime: DinDRuntime, timeoutSeconds: number): boolean {
   const deadline = Date.now() + timeoutSeconds * 1000;
 
   while (Date.now() < deadline) {
@@ -121,7 +123,7 @@ function waitForDockerReady(runtime, timeoutSeconds) {
   return false;
 }
 
-function terminateDockerdProcess(runtime, debugEnabled) {
+function terminateDockerdProcess(runtime: DinDRuntime | null, debugEnabled: boolean): void {
   if (!runtime) {
     return;
   }
@@ -130,7 +132,7 @@ function terminateDockerdProcess(runtime, debugEnabled) {
   if (pid !== null) {
     try {
       runSync("sudo", ["-n", "kill", "-TERM", String(pid)], { stdio: "ignore" });
-    } catch (error) {
+    } catch (error: unknown) {
       debugLog(debugEnabled, `dockerd TERM failed: ${String(error)}`);
     }
   }
@@ -138,7 +140,7 @@ function terminateDockerdProcess(runtime, debugEnabled) {
   if (runtime.child.exitCode === null) {
     try {
       runtime.child.kill("SIGTERM");
-    } catch (error) {
+    } catch (error: unknown) {
       debugLog(debugEnabled, `dockerd child SIGTERM failed: ${String(error)}`);
     }
   }
@@ -156,7 +158,7 @@ function terminateDockerdProcess(runtime, debugEnabled) {
   if (pid !== null && processExists(pid)) {
     try {
       runSync("sudo", ["-n", "kill", "-KILL", String(pid)], { stdio: "ignore" });
-    } catch (error) {
+    } catch (error: unknown) {
       debugLog(debugEnabled, `dockerd KILL failed: ${String(error)}`);
     }
   }
@@ -164,13 +166,13 @@ function terminateDockerdProcess(runtime, debugEnabled) {
   if (runtime.child.exitCode === null) {
     try {
       runtime.child.kill("SIGKILL");
-    } catch (error) {
+    } catch (error: unknown) {
       debugLog(debugEnabled, `dockerd child SIGKILL failed: ${String(error)}`);
     }
   }
 }
 
-export function startDinD(debugEnabled) {
+export function startDinD(debugEnabled: boolean): DinDRuntime | null {
   if (!isTruthyEnv(process.env.ENABLE_DIND)) {
     return null;
   }
@@ -188,7 +190,7 @@ export function startDinD(debugEnabled) {
   const preferredDriver = firstNonEmptyEnv(["DIND_STORAGE_DRIVER"], DEFAULT_DIND_STORAGE_DRIVER);
   const drivers = preferredDriver === "overlay2" ? ["overlay2", "vfs"] : [preferredDriver];
 
-  let lastFailure = null;
+  let lastFailure: { driver: string; logTail: string } | null = null;
 
   for (const driver of drivers) {
     debugLog(debugEnabled, `Starting dockerd with storage driver: ${driver}`);
@@ -220,7 +222,7 @@ export function startDinD(debugEnabled) {
   throw new Error("Failed to start dockerd.");
 }
 
-export function stopDinD(runtime, debugEnabled) {
+export function stopDinD(runtime: DinDRuntime | null, debugEnabled: boolean): void {
   if (!runtime) {
     return;
   }
@@ -229,16 +231,16 @@ export function stopDinD(runtime, debugEnabled) {
   terminateDockerdProcess(runtime, debugEnabled);
 }
 
-export function installDinDSignalHandlers(stopRuntime, debugEnabled) {
-  const forwardSignal = (signalName) => {
+export function installDinDSignalHandlers(stopRuntime: () => void, _debugEnabled: boolean): void {
+  const forwardSignal = (signalName: NodeJS.Signals): void => {
     stopRuntime();
     process.removeListener("SIGINT", onSigInt);
     process.removeListener("SIGTERM", onSigTerm);
     process.kill(process.pid, signalName);
   };
 
-  const onSigInt = () => forwardSignal("SIGINT");
-  const onSigTerm = () => forwardSignal("SIGTERM");
+  const onSigInt = (): void => forwardSignal("SIGINT");
+  const onSigTerm = (): void => forwardSignal("SIGTERM");
 
   process.on("SIGINT", onSigInt);
   process.on("SIGTERM", onSigTerm);

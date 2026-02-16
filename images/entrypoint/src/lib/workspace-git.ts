@@ -1,27 +1,26 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 
-import { SOURCE_WORKSPACE_DIR, TARGET_WORKSPACE_DIR } from "./constants.mjs";
-import { debugLog, firstNonEmptyEnv, runSync } from "./utils.mjs";
+import { SOURCE_WORKSPACE_DIR, TARGET_WORKSPACE_DIR } from "./constants.js";
+import { debugLog, firstNonEmptyEnv, runSync } from "./utils.js";
 
-function clearDirectoryContents(directoryPath) {
+function clearDirectoryContents(directoryPath: string): void {
   const entries = fs.readdirSync(directoryPath);
   for (const entry of entries) {
     fs.rmSync(path.join(directoryPath, entry), { recursive: true, force: true });
   }
 }
 
-export function prepareWorkspaceFromReadOnlySource(debugEnabled) {
+export function prepareWorkspaceFromReadOnlySource(debugEnabled: boolean): void {
   const sourceDir = path.resolve(SOURCE_WORKSPACE_DIR);
   const targetDir = path.resolve(TARGET_WORKSPACE_DIR);
 
   const sourceInsideTarget = sourceDir.startsWith(`${targetDir}${path.sep}`);
   const targetInsideSource = targetDir.startsWith(`${sourceDir}${path.sep}`);
   if (sourceDir === targetDir || sourceInsideTarget || targetInsideSource) {
-    throw new Error(
-      `SOURCE_WORKSPACE_DIR must not overlap with ${TARGET_WORKSPACE_DIR}: ${sourceDir}`,
-    );
+    throw new Error(`SOURCE_WORKSPACE_DIR must not overlap with ${TARGET_WORKSPACE_DIR}: ${sourceDir}`);
   }
 
   if (!fs.existsSync(sourceDir)) {
@@ -48,7 +47,7 @@ export function prepareWorkspaceFromReadOnlySource(debugEnabled) {
   debugLog(debugEnabled, "Workspace is ready in /workspace.");
 }
 
-export function configureGit() {
+export function configureGit(): void {
   const gitUserName = firstNonEmptyEnv(
     ["GIT_USER_NAME", "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"],
     "Claude Code Agent",
@@ -63,8 +62,8 @@ export function configureGit() {
   runSync("git", ["config", "--global", "--add", "safe.directory", TARGET_WORKSPACE_DIR]);
 }
 
-export function ensureGitHubAuthAndSetupGit(debugEnabled) {
-  const commandOptions = debugEnabled ? { stdio: "inherit" } : {};
+export function ensureGitHubAuthAndSetupGit(debugEnabled: boolean): void {
+  const commandOptions = debugEnabled ? { stdio: "inherit" as const } : {};
 
   debugLog(debugEnabled, "Checking GitHub CLI authentication...");
   runSync("gh", ["auth", "status"], commandOptions);
@@ -72,10 +71,10 @@ export function ensureGitHubAuthAndSetupGit(debugEnabled) {
   runSync("gh", ["auth", "setup-git"], commandOptions);
 }
 
-export function resolveUsername() {
+export function resolveUsername(): string {
   try {
     return os.userInfo().username;
   } catch {
-    return process.env.USER || "unknown";
+    return process.env.USER ?? "unknown";
   }
 }

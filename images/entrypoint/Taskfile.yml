@@ -1,0 +1,19 @@
+version: "3"
+
+tasks:
+  typecheck:
+    desc: Run TypeScript typecheck for entrypoint sources
+    cmds:
+      - npm run typecheck
+
+  build:
+    desc: Build TypeScript entrypoint sources
+    cmds:
+      - npm install
+      - npm run build
+
+  check:
+    desc: Run all entrypoint checks
+    cmds:
+      - task: build
+      - task: typecheck
