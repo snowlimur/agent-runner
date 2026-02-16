@@ -1,0 +1,20 @@
+{
+  "name": "agent-containers-runners",
+  "private": true,
+  "type": "module",
+  "description": "Runner entrypoint CLI",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "js-yaml": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.33",
+    "typescript": "^5.9.3"
+  }
+}

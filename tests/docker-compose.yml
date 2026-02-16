@@ -1,0 +1,19 @@
+services:
+  claude:
+    image: claude:latest
+    env_file:
+      - .env
+    volumes:
+      # Mount the current folder read-only; entrypoint copies it into /workspace
+      - .:/workspace-source:ro
+      # Mount only credentials file with write access
+      # Important: ./config/.credentials.json must exist
+#      - ../config/.credentials.json:/home/claude/.claude/.credentials.json:rw
+    environment:
+      # Read-only source mount location used by entrypoint.mjs
+      - SOURCE_WORKSPACE_DIR=/workspace-source
+      # Color and UI settings
+      - FORCE_COLOR=1
+    # Required for interactive mode
+    stdin_open: true
+    tty: true

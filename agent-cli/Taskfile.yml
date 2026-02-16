@@ -1,0 +1,46 @@
+version: "3"
+
+vars:
+  BINARY_NAME: agent-cli
+  BUILD_DIR: bin
+  GO_ENV: GOTOOLCHAIN=local GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache
+
+tasks:
+  build:
+    desc: Build agent-cli binary into bin/
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - "go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - "{{.GO_ENV}} go test ./..."
+
+  install:
+    desc: Install agent-cli into GOPATH/bin
+    cmds:
+      - task: build
+      - "go install ."
+
+  mod:
+    desc: downloads and tidy Go modules
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  upgrade:
+    desc: upgrade deps
+    cmds:
+      - go get -t -u ./...
+
+  lint:
+    desc: run linter
+    aliases: [l]
+    cmds:
+      - golangci-lint run .
+      - deadcode ./...
+
+  fmt:
+    cmds:
+      - gofumpt -l -w .

@@ -1,0 +1,6 @@
+.DS_Store
+.env
+
+.idea/
+.agent-cli/
+settings.local.json

@@ -1,0 +1,40 @@
+version: "3"
+
+vars:
+  DOCKER_CONTEXT: .
+  IMAGE_PREFIX: claude
+  BASE_TAG: latest
+  GO_TAG: go
+  RUST_TAG: rust
+
+includes:
+  entrypoint:
+    taskfile: ./entrypoint/Taskfile.yml
+    dir: ./entrypoint/
+
+tasks:
+  build:base:
+    desc: Build base image from Dockerfile
+    cmds:
+      - docker build -f Dockerfile -t {{.IMAGE_PREFIX}}:{{.BASE_TAG}} {{.DOCKER_CONTEXT}}
+
+  build:go:
+    desc: Build Go development image from Dockerfile.go
+    deps:
+      - build:base
+    cmds:
+      - docker build -f ./golang/Dockerfile --build-arg BASE_IMAGE={{.IMAGE_PREFIX}}:{{.BASE_TAG}} -t {{.IMAGE_PREFIX}}:{{.GO_TAG}} {{.DOCKER_CONTEXT}}
+
+  build:rust:
+    desc: Build Rust development image from Dockerfile.rust
+    deps:
+      - build:base
+    cmds:
+      - docker build -f ./rust/Dockerfile --build-arg BASE_IMAGE={{.IMAGE_PREFIX}}:{{.BASE_TAG}} -t {{.IMAGE_PREFIX}}:{{.RUST_TAG}} {{.DOCKER_CONTEXT}}
+
+  build:all:
+    desc: Build all images (base, go, rust)
+    cmds:
+      - task build:base
+      - task build:go
+#      - task build:rust
