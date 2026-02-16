@@ -1,0 +1,18 @@
+version: "3"
+
+includes:
+  cli:
+    taskfile: ./agent-cli/Taskfile.yml
+    dir: ./agent-cli/
+  image:
+    taskfile: ./images/Taskfile.yml
+    dir: ./images/
+  test:
+    taskfile: ./tests/Taskfile.yml
+    dir: ./tests/
+
+tasks:
+  install:
+    cmds:
+      - task: cli:install
+      - task: image:build:all

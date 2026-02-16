@@ -1,0 +1,9 @@
+version: v1
+stages:
+  - id: main
+    mode: sequential
+    tasks:
+      - id: build_run
+        prompt: "Build and run the project."
+      - id: print_version
+        prompt_file: "version.md"

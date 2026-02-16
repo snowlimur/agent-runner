@@ -1,0 +1,17 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "lspServers": {
+    "go": {
+      "command": "gopls",
+      "args": [
+        "serve"
+      ],
+      "extensionToLanguage": {
+        ".go": "go"
+      }
+    }
+  }
+}

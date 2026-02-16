@@ -1,0 +1,10 @@
+{
+  "name": "agent-containers-runners",
+  "private": true,
+  "type": "module",
+  "description": "Runner entrypoint CLI",
+  "dependencies": {
+    "commander": "^14.0.3",
+    "js-yaml": "^4.1.1"
+  }
+}
