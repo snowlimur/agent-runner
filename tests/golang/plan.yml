@@ -1,9 +1,12 @@
 version: v1
 stages:
   - id: main
-    mode: sequential
+    mode: parallel
+    workspace: worktree
     tasks:
       - id: build_run
+        model: opus
         prompt: "Build and run the project."
       - id: print_version
+        model: sonnet
         prompt_file: "version.md"

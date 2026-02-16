@@ -38,7 +38,6 @@ export interface PipelineDefaults {
 
 export interface PipelineTask {
   id: string;
-  prompt: string | null;
   promptFile: PromptFileRef | null;
   onError: OnErrorPolicy;
   workspace: WorkspaceMode;
@@ -46,7 +45,6 @@ export interface PipelineTask {
   verbosity: Verbosity;
   readOnly: boolean;
   allowSharedWrites: boolean;
-  promptSource: PromptSource;
   promptText: string;
 }
 

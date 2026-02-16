@@ -264,11 +264,29 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
       }
 
       let promptFile: PromptFileRef | null = null;
+      let promptText = "";
       if (promptFileValue) {
         promptFile = resolvePromptFilePath(
           promptFileValue,
           `stages[${stageIndex}].tasks[${taskIndex}].prompt_file`,
         );
+
+        let content: string;
+        try {
+          content = fs.readFileSync(promptFile.resolved, "utf8");
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to read prompt_file for ${stageID}/${taskID} (${promptFile.normalized}): ${message}`,
+          );
+        }
+
+        promptText = content.trim();
+        if (!promptText) {
+          throw new Error(`prompt_file is empty for ${stageID}/${taskID}: ${promptFile.normalized}`);
+        }
+      } else {
+        promptText = requireNonEmptyString(promptValue, `task prompt for ${stageID}/${taskID}`);
       }
 
       const taskOnError = normalizeOnErrorValue(
@@ -296,7 +314,6 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
 
       return {
         id: taskID,
-        prompt: promptValue || null,
         promptFile,
         onError: taskOnError,
         workspace: taskWorkspace,
@@ -304,8 +321,7 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
         verbosity: taskVerbosity,
         readOnly: Boolean(readOnly),
         allowSharedWrites: Boolean(allowSharedWrites),
-        promptSource: promptValue ? "prompt" : "prompt_file",
-        promptText: "",
+        promptText,
       };
     });
 
@@ -331,39 +347,11 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
     };
   });
 
-  hydrateTaskPrompts(stages);
-
   return {
     version: PIPELINE_VERSION,
     defaults,
     stages,
   };
-}
-
-function hydrateTaskPrompts(stages: PipelinePlan["stages"]): void {
-  for (const stage of stages) {
-    for (const task of stage.tasks) {
-      if (task.promptFile) {
-        let content: string;
-        try {
-          content = fs.readFileSync(task.promptFile.resolved, "utf8");
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `Failed to read prompt_file for ${stage.id}/${task.id} (${task.promptFile.normalized}): ${message}`,
-          );
-        }
-
-        const promptText = content.trim();
-        if (!promptText) {
-          throw new Error(`prompt_file is empty for ${stage.id}/${task.id}: ${task.promptFile.normalized}`);
-        }
-        task.promptText = promptText;
-      } else {
-        task.promptText = requireNonEmptyString(task.prompt, `task prompt for ${stage.id}/${task.id}`);
-      }
-    }
-  }
 }
 
 export function resolvePipelinePlan(args: EntrypointArgs, fallbackModel: Model): PipelinePlan | null {

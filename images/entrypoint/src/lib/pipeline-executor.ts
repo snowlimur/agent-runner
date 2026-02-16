@@ -185,6 +185,8 @@ async function executePipelineTask(
 ): Promise<PipelineTaskResult> {
   const startedAt = new Date();
   const taskWorkspaceDir = prepareTaskWorkspace(planRunID, stage.id, task);
+  const promptSource = task.promptFile ? "prompt_file" : "prompt";
+  const promptFile = task.promptFile ? task.promptFile.normalized : "";
 
   emitPipelineEvent("task_start", {
     stage_id: stage.id,
@@ -192,8 +194,8 @@ async function executePipelineTask(
     model: task.model,
     verbosity: task.verbosity,
     workspace: task.workspace,
-    prompt_source: task.promptSource,
-    prompt_file: task.promptFile ? task.promptFile.normalized : "",
+    prompt_source: promptSource,
+    prompt_file: promptFile,
     started_at: startedAt.toISOString(),
   });
 
@@ -239,8 +241,8 @@ async function executePipelineTask(
       workspace: task.workspace,
       model: task.model,
       verbosity: task.verbosity,
-      prompt_source: task.promptSource,
-      prompt_file: task.promptFile ? task.promptFile.normalized : "",
+      prompt_source: promptSource,
+      prompt_file: promptFile,
       exit_code: result.code,
       signal: result.signal,
       started_at: startedAt.toISOString(),
@@ -266,8 +268,8 @@ async function executePipelineTask(
       workspace: task.workspace,
       model: task.model,
       verbosity: task.verbosity,
-      prompt_source: task.promptSource,
-      prompt_file: task.promptFile ? task.promptFile.normalized : "",
+      prompt_source: promptSource,
+      prompt_file: promptFile,
       exit_code: -1,
       signal: "",
       started_at: startedAt.toISOString(),

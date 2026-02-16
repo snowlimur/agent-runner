@@ -389,6 +389,53 @@ func TestRunCommandPipelineSummaryShowsOnlyStatusAndTokens(t *testing.T) {
 	assertNotContains(t, output, "docker_exit_code:")
 }
 
+func TestRunCommandPipelineParseErrorUsesEntrypointMessage(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	planPath := filepath.Join(cwd, "pipeline.yaml")
+	planContent := "version: v1\nstages:\n  - id: main\n    mode: parallel\n    tasks:\n      - id: build\n        prompt: build\n"
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	entrypointErr := "Entrypoint failed: Parallel task main/build uses shared workspace with writes. Set read_only=true or allow_shared_writes=true."
+
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		if hooks.OnStderrLine != nil {
+			hooks.OnStderrLine(entrypointErr)
+		}
+		return runner.RunOutput{
+			Stdout:   "",
+			Stderr:   entrypointErr + "\n",
+			ExitCode: 1,
+		}, errors.New("container exited with code 1")
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	err := RunCommand(context.Background(), cwd, []string{"--pipeline", planPath})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), entrypointErr) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	record := loadSingleRunRecord(t, cwd).Record
+	if record.Status != stats.RunStatusParseError {
+		t.Fatalf("unexpected status: %s", record.Status)
+	}
+	if record.ErrorType != "pipeline_parse_error" {
+		t.Fatalf("unexpected error type: %s", record.ErrorType)
+	}
+	if record.ErrorMessage != entrypointErr {
+		t.Fatalf("unexpected error message: %q", record.ErrorMessage)
+	}
+}
+
 func TestRunCommandModelOverrideTakesPriority(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfigWithModel(t, cwd, "sonnet")

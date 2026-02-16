@@ -73,6 +73,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	record.Stream.EnsureMaps()
 
 	stdoutLines := make([]string, 0, 32)
+	stderrLines := make([]string, 0, 16)
 	startedToolUses := map[string]struct{}{}
 	resolvedToolResults := map[string]struct{}{}
 	lastTodoStatuses := map[string]string{}
@@ -133,6 +134,9 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 				record.Stream.InvalidJSONLines++
 			}
 		},
+		OnStderrLine: func(line string) {
+			stderrLines = append(stderrLines, line)
+		},
 	})
 	record.Normalized = streamMetrics
 	record.DockerExitCode = runOutput.ExitCode
@@ -145,7 +149,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	)
 	if isPlanRun {
 		var pipelineRecord *stats.PipelineRunRecord
-		pipelineRecord, pipelineRaw, parseErr = extractPipelineResultFromStream(stdoutLines)
+		pipelineRecord, pipelineRaw, parseErr = extractPipelineResultFromStream(stdoutLines, stderrLines)
 		if parseErr == nil {
 			record.Pipeline = pipelineRecord
 		}
@@ -212,17 +216,17 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		printRunSummary(record)
 	}
 
-	if runErr != nil {
-		if errors.Is(runErr, runner.ErrInterrupted) {
-			return runErr
-		}
-		if runOutput.ExitCode != -1 {
-			return fmt.Errorf("docker exited with code %d", runOutput.ExitCode)
-		}
+	if runErr != nil && errors.Is(runErr, runner.ErrInterrupted) {
+		return runErr
+	}
+	if runErr != nil && runOutput.ExitCode == -1 {
 		return runErr
 	}
 	if parseErr != nil {
 		return parseErr
+	}
+	if runErr != nil {
+		return fmt.Errorf("docker exited with code %d", runOutput.ExitCode)
 	}
 	if !isPlanRun && parsed != nil && parsed.Agent.IsError {
 		return errors.New("agent returned is_error=true")
@@ -349,9 +353,9 @@ type pipelineResultEvent struct {
 	Tasks           []stats.PipelineTaskRecord `json:"tasks"`
 }
 
-func extractPipelineResultFromStream(lines []string) (*stats.PipelineRunRecord, string, error) {
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
+func extractPipelineResultFromStream(stdoutLines []string, stderrLines []string) (*stats.PipelineRunRecord, string, error) {
+	for i := len(stdoutLines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(stdoutLines[i])
 		if line == "" {
 			continue
 		}
@@ -376,7 +380,38 @@ func extractPipelineResultFromStream(lines []string) (*stats.PipelineRunRecord, 
 		}, line, nil
 	}
 
+	if message := extractPipelineFailureMessage(stdoutLines, stderrLines); message != "" {
+		return nil, "", errors.New(message)
+	}
+
 	return nil, "", errors.New("pipeline result event not found in stream output")
+}
+
+func extractPipelineFailureMessage(lineSets ...[]string) string {
+	fallback := ""
+	for _, lines := range lineSets {
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			if strings.HasPrefix(line, "{") {
+				var payload map[string]any
+				if err := json.Unmarshal([]byte(line), &payload); err == nil {
+					// Skip machine-readable JSON lines and prefer explicit human-readable failures.
+					continue
+				}
+			}
+			if strings.HasPrefix(line, "Entrypoint failed:") {
+				return line
+			}
+			if fallback == "" {
+				fallback = line
+			}
+		}
+	}
+
+	return fallback
 }
 
 func printRunSummary(record *stats.RunRecord) {
