@@ -19,8 +19,9 @@ func TestProgressPrinterInitAndToolLifecycle(t *testing.T) {
 	initLine := `{"type":"system","subtype":"init","session_id":"s1","model":"claude-sonnet"}`
 	assistantLine := `{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"tool1","name":"Bash","input":{"command":"go version","description":"Print Go version"}}]}}`
 	userLine := `{"type":"user","session_id":"s1","message":{"content":[{"tool_use_id":"tool1","type":"tool_result","content":"go version go1.26.0","is_error":false}]},"tool_use_result":{"stdout":"go version go1.26.0 linux/arm64","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}`
+	resultLine := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":2,"result":"Build completed","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`
 
-	for _, line := range []string{initLine, assistantLine, userLine} {
+	for _, line := range []string{initLine, assistantLine, userLine, resultLine} {
 		event, kind, err := result.ParseStreamLine(line)
 		if err != nil {
 			t.Fatalf("parse stream line: %v", err)
@@ -36,6 +37,7 @@ func TestProgressPrinterInitAndToolLifecycle(t *testing.T) {
 	assertContains(t, output, "[Bash#tool1:start] go version")
 	assertContains(t, output, "[Bash#tool1:done] ok | 2s")
 	assertContains(t, output, "[Bash#tool1:output] go version go1.26.0 linux/arm64")
+	assertContains(t, output, "[result] Build completed")
 }
 
 func TestProgressPrinterTodoTransitions(t *testing.T) {
@@ -158,6 +160,7 @@ func TestProgressPrinterPipelineTaskBinding(t *testing.T) {
 		`{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus"}`,
 		`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"tool1","name":"Bash","input":{"command":"go version"}}]}}`,
 		`{"type":"user","session_id":"s1","message":{"content":[{"tool_use_id":"tool1","type":"tool_result","content":"go version go1.26.0","is_error":false}]},"tool_use_result":{"stdout":"go version go1.26.0 linux/arm64","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}`,
+		`{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":2,"result":"Go version printed","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`,
 	}
 
 	for _, line := range lines {
@@ -176,6 +179,7 @@ func TestProgressPrinterPipelineTaskBinding(t *testing.T) {
 	assertContains(t, output, "[main/build_run] [Bash#tool1:start] go version")
 	assertContains(t, output, "[main/build_run] [Bash#tool1:done] ok | 1s")
 	assertContains(t, output, "[main/build_run] [Bash#tool1:output] go version go1.26.0 linux/arm64")
+	assertContains(t, output, "[main/build_run] [result] Go version printed")
 }
 
 func TestProgressPrinterPipelineInterleavingBySession(t *testing.T) {

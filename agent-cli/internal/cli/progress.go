@@ -72,6 +72,10 @@ func (p *ProgressPrinter) HandleEvent(event *result.StreamEvent) {
 	if event.User != nil {
 		p.handleUser(event.User)
 	}
+
+	if event.Result != nil {
+		p.handleResult(event.Result)
+	}
 }
 
 func (p *ProgressPrinter) handlePipeline(event *result.PipelineEvent) {
@@ -202,6 +206,20 @@ func (p *ProgressPrinter) handleUser(event *result.UserEvent) {
 	if !suppressTodoTransitions {
 		p.printTodoTransitions(sessionID, event.ToolUseResult.OldTodos, event.ToolUseResult.NewTodos)
 	}
+}
+
+func (p *ProgressPrinter) handleResult(event *result.AgentResult) {
+	if event == nil {
+		return
+	}
+
+	message := strings.TrimSpace(event.Result)
+	if message == "" {
+		return
+	}
+
+	sessionID := strings.TrimSpace(event.SessionID)
+	p.printLine(p.now(), sessionID, "result", "%s", message)
 }
 
 func buildToolSnippet(item result.UserToolResult, payload result.UserToolUseResult) string {
