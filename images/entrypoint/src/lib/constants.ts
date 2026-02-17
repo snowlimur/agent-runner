@@ -1,4 +1,4 @@
-import { firstNonEmptyEnv } from "./utils.js";
+import { firstNonEmptyEnv, parsePositiveInteger } from "./utils.js";
 import type { OnErrorPolicy, PipelineVersion, Verbosity, WorkspaceMode } from "./types.js";
 
 export const TARGET_WORKSPACE_DIR = "/workspace";
@@ -15,4 +15,8 @@ export const PIPELINE_VERSION: PipelineVersion = "v1";
 export const PIPELINE_DEFAULT_ON_ERROR: OnErrorPolicy = "fail_fast";
 export const PIPELINE_DEFAULT_WORKSPACE: WorkspaceMode = "shared";
 export const PIPELINE_DEFAULT_VERBOSITY: Verbosity = "vv";
+export const PIPELINE_DEFAULT_TASK_IDLE_TIMEOUT_SEC = parsePositiveInteger(
+  firstNonEmptyEnv(["PIPELINE_TASK_IDLE_TIMEOUT_SEC"], "1800"),
+  1800,
+);
 export const PIPELINE_WORKSPACE_ROOT = "/tmp/agent-pipeline-workspaces";

@@ -86,17 +86,65 @@ export function runClaudeProcess(
   args: readonly string[],
   options: RunClaudeProcessOptions = {},
 ): Promise<ClaudeProcessResult> {
-  const { onStdoutLine, ...spawnOptions } = options;
+  const { onStdoutLine, timeoutMs, onIdleTimeout, ...spawnOptions } = options;
   const stdoutHook = typeof onStdoutLine === "function" ? onStdoutLine : null;
   const hasStdoutHook = stdoutHook !== null;
+  const idleTimeoutMs = Number.isFinite(timeoutMs) && Number(timeoutMs) > 0 ? Math.trunc(Number(timeoutMs)) : 0;
+  const streamViaPipe = hasStdoutHook || idleTimeoutMs > 0;
 
   return new Promise<ClaudeProcessResult>((resolve, reject) => {
     const child = spawn("claude", [...args], {
-      stdio: hasStdoutHook ? ["inherit", "pipe", "pipe"] : "inherit",
+      stdio: streamViaPipe ? ["inherit", "pipe", "pipe"] : "inherit",
       ...spawnOptions,
     });
 
     let stdoutBuffer = "";
+    let timedOut = false;
+    let closed = false;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let forceKillTimer: NodeJS.Timeout | null = null;
+
+    const clearTimers = (): void => {
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      if (forceKillTimer !== null) {
+        clearTimeout(forceKillTimer);
+        forceKillTimer = null;
+      }
+    };
+
+    const scheduleIdleTimeout = (): void => {
+      if (idleTimeoutMs <= 0 || closed) {
+        return;
+      }
+
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+      }
+
+      idleTimer = setTimeout(() => {
+        if (closed) {
+          return;
+        }
+
+        timedOut = true;
+        onIdleTimeout?.(idleTimeoutMs);
+        child.kill("SIGTERM");
+
+        forceKillTimer = setTimeout(() => {
+          if (closed) {
+            return;
+          }
+          child.kill("SIGKILL");
+        }, 10_000);
+      }, idleTimeoutMs);
+    };
+
+    const markActivity = (): void => {
+      scheduleIdleTimeout();
+    };
 
     const flushStdoutBuffer = (): void => {
       if (!stdoutHook || !stdoutBuffer) {
@@ -107,42 +155,59 @@ export function runClaudeProcess(
       stdoutBuffer = "";
     };
 
-    if (hasStdoutHook && child.stdout) {
+    if (streamViaPipe && child.stdout) {
       child.stdout.setEncoding("utf8");
       child.stdout.on("data", (chunk: string) => {
-        stdoutBuffer += chunk;
-        while (true) {
-          const lineEndIndex = stdoutBuffer.indexOf("\n");
-          if (lineEndIndex === -1) {
-            break;
+        markActivity();
+        if (hasStdoutHook) {
+          stdoutBuffer += chunk;
+          while (true) {
+            const lineEndIndex = stdoutBuffer.indexOf("\n");
+            if (lineEndIndex === -1) {
+              break;
+            }
+
+            const lineWithNewline = stdoutBuffer.slice(0, lineEndIndex + 1);
+            stdoutBuffer = stdoutBuffer.slice(lineEndIndex + 1);
+
+            const line = lineWithNewline.slice(0, -1).replace(/\r$/, "");
+            stdoutHook(line);
+            process.stdout.write(lineWithNewline);
           }
-
-          const lineWithNewline = stdoutBuffer.slice(0, lineEndIndex + 1);
-          stdoutBuffer = stdoutBuffer.slice(lineEndIndex + 1);
-
-          const line = lineWithNewline.slice(0, -1).replace(/\r$/, "");
-          stdoutHook(line);
-          process.stdout.write(lineWithNewline);
+          return;
         }
+        process.stdout.write(chunk);
       });
     }
 
-    if (hasStdoutHook && child.stderr) {
+    if (streamViaPipe && child.stderr) {
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk: string) => {
+        markActivity();
         process.stderr.write(chunk);
       });
     }
 
+    scheduleIdleTimeout();
+
     child.on("error", (error: Error) => {
+      closed = true;
+      clearTimers();
       reject(new Error(`Failed to start claude: ${error.message}`));
     });
 
     child.on("close", (code, signal) => {
+      closed = true;
+      clearTimers();
       flushStdoutBuffer();
+      const timeoutMessage = timedOut
+        ? `idle timeout after ${Math.max(1, Math.floor(idleTimeoutMs / 1000))} seconds without task output`
+        : "";
       resolve({
-        code: code ?? 1,
+        code: code ?? (timedOut ? 124 : 1),
         signal: signal ?? "",
+        timedOut,
+        timeoutMessage,
       });
     });
   });
@@ -196,6 +261,7 @@ async function executePipelineTask(
     workspace: task.workspace,
     prompt_source: promptSource,
     prompt_file: promptFile,
+    task_idle_timeout_sec: task.taskIdleTimeoutSec,
     started_at: startedAt.toISOString(),
   });
 
@@ -217,6 +283,15 @@ async function executePipelineTask(
     const boundSessionIDs = new Set<string>();
     const result = await runClaudeProcess(claudeArgs, {
       cwd: taskWorkspaceDir,
+      timeoutMs: task.taskIdleTimeoutSec * 1000,
+      onIdleTimeout: () => {
+        emitPipelineEvent("task_timeout", {
+          stage_id: stage.id,
+          task_id: task.id,
+          idle_timeout_sec: task.taskIdleTimeoutSec,
+          reason: `idle timeout after ${task.taskIdleTimeoutSec} seconds without task output`,
+        });
+      },
       onStdoutLine: (line) => {
         const sessionID = extractSystemInitSessionID(line);
         if (!sessionID || boundSessionIDs.has(sessionID)) {
@@ -232,7 +307,8 @@ async function executePipelineTask(
     });
 
     const finishedAt = new Date();
-    const isError = Boolean(result.signal) || result.code !== 0;
+    const isError = result.timedOut || Boolean(result.signal) || result.code !== 0;
+    const timeoutMessage = String(result.timeoutMessage ?? "").trim();
     const taskResult: PipelineTaskResult = {
       stage_id: stage.id,
       task_id: task.id,
@@ -249,7 +325,9 @@ async function executePipelineTask(
       finished_at: finishedAt.toISOString(),
       duration_ms: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
       error_message: isError
-        ? result.signal
+        ? timeoutMessage
+          ? timeoutMessage
+          : result.signal
           ? `Task terminated by signal ${result.signal}`
           : `Task exited with code ${result.code}`
         : "",

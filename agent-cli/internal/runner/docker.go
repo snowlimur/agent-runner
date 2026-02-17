@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -27,10 +28,14 @@ import (
 
 const (
 	defaultModel                    = "opus"
+	defaultRunIdleTimeoutSeconds    = 7200
+	defaultPipelineTaskIdleTimeout  = 1800
 	containerWorkspaceDir           = "/workspace"
 	containerStopTimeoutSeconds     = 10
 	containerCleanupTimeout         = 15 * time.Second
 	interruptedLogDrainTimeout      = 5 * time.Second
+	postExitLogDrainTimeout         = 15 * time.Second
+	runIdleCheckInterval            = 250 * time.Millisecond
 	interruptedExitCode             = 130
 	managedContainerLabelKey        = "agent-cli.managed"
 	managedContainerLabelValue      = "true"
@@ -40,6 +45,8 @@ const (
 var (
 	// ErrInterrupted marks an interrupted run (for example Ctrl+C/SIGTERM).
 	ErrInterrupted = errors.New("run interrupted")
+	// ErrIdleTimeout marks a timeout when there is no stdout/stderr activity for too long.
+	ErrIdleTimeout = errors.New("run idle timeout")
 
 	newDockerAPIFn = func() (dockerAPI, error) {
 		cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -73,17 +80,19 @@ type runSpec struct {
 }
 
 type RunRequest struct {
-	Image              string
-	CWD                string
-	SourceWorkspaceDir string
-	GitHubToken        string
-	ClaudeToken        string
-	GitUserName        string
-	GitUserEmail       string
-	Prompt             string
-	Pipeline           string
-	Model              string
-	EnableDinD         bool
+	Image                      string
+	CWD                        string
+	SourceWorkspaceDir         string
+	GitHubToken                string
+	ClaudeToken                string
+	GitUserName                string
+	GitUserEmail               string
+	Prompt                     string
+	Pipeline                   string
+	Model                      string
+	EnableDinD                 bool
+	RunIdleTimeoutSec          int
+	PipelineTaskIdleTimeoutSec int
 }
 
 type RunOutput struct {
@@ -120,9 +129,39 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 		Args: append([]string(nil), spec.CommandArgs...),
 	}
 
-	if ctx.Err() != nil {
-		output.ExitCode = interruptedExitCode
-		return output, wrapInterruptedError(nil)
+	runIdleTimeout := resolveRunIdleTimeout(req.RunIdleTimeoutSec)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	var lastActivityUnixNano atomic.Int64
+	lastActivityUnixNano.Store(time.Now().UnixNano())
+	var idleTimedOut atomic.Bool
+
+	touchActivity := func() {
+		lastActivityUnixNano.Store(time.Now().UnixNano())
+	}
+
+	go monitorRunIdleTimeout(runCtx, runIdleTimeout, &lastActivityUnixNano, &idleTimedOut, cancelRun)
+
+	wrappedHooks := StreamHooks{
+		OnStdoutLine: func(line string) {
+			touchActivity()
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		},
+		OnStderrLine: func(line string) {
+			touchActivity()
+			if hooks.OnStderrLine != nil {
+				hooks.OnStderrLine(line)
+			}
+		},
+	}
+
+	if runCtx.Err() != nil {
+		exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut)
+		output.ExitCode = exitCode
+		return output, cancelErr
 	}
 
 	dockerClient, err := newDockerAPIFn()
@@ -132,18 +171,20 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 	}
 	defer dockerClient.Close()
 
-	if err := cleanupStaleContainers(ctx, dockerClient, spec.CWDHash); err != nil {
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			output.ExitCode = interruptedExitCode
-			return output, wrapInterruptedError(nil)
+	if err := cleanupStaleContainers(runCtx, dockerClient, spec.CWDHash); err != nil {
+		if runCtx.Err() != nil || isContextCanceledError(err) {
+			exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut)
+			output.ExitCode = exitCode
+			return output, cancelErr
 		}
 		output.ExitCode = -1
 		return output, fmt.Errorf("cleanup stale containers: %w", err)
 	}
 
-	if err := pullImageBestEffort(ctx, dockerClient, req.Image); err != nil && ctx.Err() != nil {
-		output.ExitCode = interruptedExitCode
-		return output, wrapInterruptedError(nil)
+	if err := pullImageBestEffort(runCtx, dockerClient, req.Image); err != nil && runCtx.Err() != nil {
+		exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut)
+		output.ExitCode = exitCode
+		return output, cancelErr
 	}
 
 	containerConfig := &container.Config{
@@ -171,11 +212,12 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 		},
 	}
 
-	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
+	createResp, err := dockerClient.ContainerCreate(runCtx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			output.ExitCode = interruptedExitCode
-			return output, wrapInterruptedError(nil)
+		if runCtx.Err() != nil || isContextCanceledError(err) {
+			exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut)
+			output.ExitCode = exitCode
+			return output, cancelErr
 		}
 		output.ExitCode = -1
 		return output, fmt.Errorf("create container: %w", err)
@@ -184,11 +226,12 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 	containerID := createResp.ID
 	cleanup := makeCleanupOnce(dockerClient, containerID)
 
-	if err := dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+	if err := dockerClient.ContainerStart(runCtx, containerID, container.StartOptions{}); err != nil {
 		cleanupErr := cleanup()
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			output.ExitCode = interruptedExitCode
-			return output, wrapInterruptedError(cleanupErr)
+		if runCtx.Err() != nil || isContextCanceledError(err) {
+			exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut, cleanupErr)
+			output.ExitCode = exitCode
+			return output, cancelErr
 		}
 		output.ExitCode = -1
 		if cleanupErr != nil {
@@ -197,16 +240,17 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 		return output, fmt.Errorf("start container: %w", err)
 	}
 
-	logsReader, err := dockerClient.ContainerLogs(ctx, containerID, container.LogsOptions{
+	logsReader, err := dockerClient.ContainerLogs(runCtx, containerID, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
 	})
 	if err != nil {
 		cleanupErr := cleanup()
-		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			output.ExitCode = interruptedExitCode
-			return output, wrapInterruptedError(cleanupErr)
+		if runCtx.Err() != nil || isContextCanceledError(err) {
+			exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut, cleanupErr)
+			output.ExitCode = exitCode
+			return output, cancelErr
 		}
 		output.ExitCode = -1
 		if cleanupErr != nil {
@@ -219,20 +263,21 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 	var stderr bytes.Buffer
 	streamErrCh := make(chan error, 1)
 	go func() {
-		streamErrCh <- streamContainerLogs(logsReader, &stdout, &stderr, hooks)
+		streamErrCh <- streamContainerLogs(logsReader, &stdout, &stderr, wrappedHooks)
 	}()
 
-	statusCh, waitErrCh := dockerClient.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
-	waitResp, waitErr := waitForContainer(ctx, statusCh, waitErrCh)
+	statusCh, waitErrCh := dockerClient.ContainerWait(runCtx, containerID, container.WaitConditionNotRunning)
+	waitResp, waitErr := waitForContainer(runCtx, statusCh, waitErrCh)
 
 	if waitErr != nil {
-		if ctx.Err() != nil || errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded) {
+		if runCtx.Err() != nil || isContextCanceledError(waitErr) {
 			cleanupErr := cleanup()
 			streamErr := waitForStreamErrorWithTimeout(streamErrCh, interruptedLogDrainTimeout)
 			output.Stdout = stdout.String()
 			output.Stderr = stderr.String()
-			output.ExitCode = interruptedExitCode
-			return output, wrapInterruptedError(cleanupErr, streamErr)
+			exitCode, cancelErr := runCancellationError(runIdleTimeout, &idleTimedOut, cleanupErr, streamErr)
+			output.ExitCode = exitCode
+			return output, cancelErr
 		}
 
 		cleanupErr := cleanup()
@@ -250,7 +295,7 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 		return output, fmt.Errorf("wait for container: %w", waitErr)
 	}
 
-	streamErr := <-streamErrCh
+	streamErr := waitForStreamErrorWithTimeout(streamErrCh, postExitLogDrainTimeout)
 	output.Stdout = stdout.String()
 	output.Stderr = stderr.String()
 
@@ -317,6 +362,7 @@ func buildRunSpec(req RunRequest) (runSpec, error) {
 		"SOURCE_WORKSPACE_DIR=" + req.SourceWorkspaceDir,
 		"GIT_USER_NAME=" + req.GitUserName,
 		"GIT_USER_EMAIL=" + req.GitUserEmail,
+		fmt.Sprintf("PIPELINE_TASK_IDLE_TIMEOUT_SEC=%d", resolvePipelineTaskIdleTimeoutSec(req.PipelineTaskIdleTimeoutSec)),
 		"FORCE_COLOR=1",
 	}
 
@@ -574,6 +620,46 @@ func waitForStreamErrorWithTimeout(streamErrCh <-chan error, timeout time.Durati
 	}
 }
 
+func monitorRunIdleTimeout(
+	ctx context.Context,
+	timeout time.Duration,
+	lastActivityUnixNano *atomic.Int64,
+	idleTimedOut *atomic.Bool,
+	cancel context.CancelFunc,
+) {
+	if timeout <= 0 {
+		return
+	}
+
+	ticker := time.NewTicker(runIdleCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			lastActivityAt := time.Unix(0, lastActivityUnixNano.Load())
+			if time.Since(lastActivityAt) >= timeout {
+				idleTimedOut.Store(true)
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func runCancellationError(runIdleTimeout time.Duration, idleTimedOut *atomic.Bool, extraErrs ...error) (int, error) {
+	if idleTimedOut != nil && idleTimedOut.Load() {
+		return -1, wrapIdleTimeoutError(runIdleTimeout, extraErrs...)
+	}
+	return interruptedExitCode, wrapInterruptedError(extraErrs...)
+}
+
+func isContextCanceledError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func streamLines(reader io.Reader, collector *bytes.Buffer, onLine func(line string)) error {
 	scanner := bufio.NewScanner(reader)
 	buffer := make([]byte, 0, 1024*64)
@@ -609,6 +695,36 @@ func wrapInterruptedError(extraErrs ...error) error {
 	}
 
 	return fmt.Errorf("%w: run interrupted by signal; %s", ErrInterrupted, strings.Join(details, "; "))
+}
+
+func wrapIdleTimeoutError(timeout time.Duration, extraErrs ...error) error {
+	details := make([]string, 0, len(extraErrs))
+	for _, err := range extraErrs {
+		if err == nil {
+			continue
+		}
+		details = append(details, err.Error())
+	}
+
+	if len(details) == 0 {
+		return fmt.Errorf("%w: no log activity for %v", ErrIdleTimeout, timeout)
+	}
+
+	return fmt.Errorf("%w: no log activity for %v; %s", ErrIdleTimeout, timeout, strings.Join(details, "; "))
+}
+
+func resolveRunIdleTimeout(timeoutSec int) time.Duration {
+	if timeoutSec <= 0 {
+		timeoutSec = defaultRunIdleTimeoutSeconds
+	}
+	return time.Duration(timeoutSec) * time.Second
+}
+
+func resolvePipelineTaskIdleTimeoutSec(timeoutSec int) int {
+	if timeoutSec <= 0 {
+		return defaultPipelineTaskIdleTimeout
+	}
+	return timeoutSec
 }
 
 func hashString(input string) string {

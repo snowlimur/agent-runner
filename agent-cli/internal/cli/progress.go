@@ -84,24 +84,41 @@ func (p *ProgressPrinter) handlePipeline(event *result.PipelineEvent) {
 	}
 	p.pipelineMode = true
 
-	if !strings.EqualFold(strings.TrimSpace(event.Event), "task_session_bind") {
-		return
-	}
+	switch strings.ToLower(strings.TrimSpace(event.Event)) {
+	case "task_session_bind":
+		sessionID := strings.TrimSpace(event.SessionID)
+		if sessionID == "" {
+			return
+		}
 
-	sessionID := strings.TrimSpace(event.SessionID)
-	if sessionID == "" {
-		return
-	}
+		stageID := strings.TrimSpace(event.StageID)
+		taskID := strings.TrimSpace(event.TaskID)
+		if stageID == "" || taskID == "" {
+			return
+		}
 
-	stageID := strings.TrimSpace(event.StageID)
-	taskID := strings.TrimSpace(event.TaskID)
-	if stageID == "" || taskID == "" {
-		return
-	}
-
-	p.sessionTask[sessionID] = taskRef{
-		StageID: stageID,
-		TaskID:  taskID,
+		p.sessionTask[sessionID] = taskRef{
+			StageID: stageID,
+			TaskID:  taskID,
+		}
+	case "task_timeout":
+		message := strings.TrimSpace(event.Reason)
+		if message == "" && event.IdleTimeoutSec > 0 {
+			message = fmt.Sprintf("idle timeout after %ds without task output", event.IdleTimeoutSec)
+		}
+		if message == "" {
+			message = "task timed out"
+		}
+		p.printPipelineTaskLine(p.now(), event.StageID, event.TaskID, "timeout", "%s", message)
+	case "task_finish":
+		if !strings.EqualFold(strings.TrimSpace(event.Status), "error") {
+			return
+		}
+		message := strings.TrimSpace(event.ErrorMessage)
+		if message == "" {
+			message = "task failed"
+		}
+		p.printPipelineTaskLine(p.now(), event.StageID, event.TaskID, "task:error", "%s", message)
 	}
 }
 
@@ -327,6 +344,23 @@ func (p *ProgressPrinter) printLine(ts time.Time, sessionID, label, format strin
 		fmt.Fprintf(p.w, "%s [%s] %s\n", timestamp, label, message)
 		return
 	}
+	fmt.Fprintf(p.w, "%s %s [%s] %s\n", timestamp, taskPrefix, label, message)
+}
+
+func (p *ProgressPrinter) printPipelineTaskLine(ts time.Time, stageID, taskID, label, format string, args ...any) {
+	timestamp := ts.Local().Format("15:04:05")
+	stage := strings.TrimSpace(stageID)
+	task := strings.TrimSpace(taskID)
+	taskPrefix := "[unbound]"
+	if stage != "" && task != "" {
+		taskPrefix = fmt.Sprintf("[%s/%s]", stage, task)
+	}
+
+	if format == "" {
+		fmt.Fprintf(p.w, "%s %s [%s]\n", timestamp, taskPrefix, label)
+		return
+	}
+	message := fmt.Sprintf(format, args...)
 	fmt.Fprintf(p.w, "%s %s [%s] %s\n", timestamp, taskPrefix, label, message)
 }
 

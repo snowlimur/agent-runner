@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -367,6 +368,7 @@ func TestRunDockerStreamingSuccessUsesSDKAndStreams(t *testing.T) {
 		!containsString(fake.createdConfig.Env, "SOURCE_WORKSPACE_DIR=/workspace-source") ||
 		!containsString(fake.createdConfig.Env, "GIT_USER_NAME=User") ||
 		!containsString(fake.createdConfig.Env, "GIT_USER_EMAIL=user@example.com") ||
+		!containsString(fake.createdConfig.Env, "PIPELINE_TASK_IDLE_TIMEOUT_SEC=1800") ||
 		!containsString(fake.createdConfig.Env, "FORCE_COLOR=1") {
 		t.Fatalf("unexpected env: %#v", fake.createdConfig.Env)
 	}
@@ -495,6 +497,90 @@ func TestRunDockerStreamingEnableDinDSetsPrivilegedAndEnv(t *testing.T) {
 	}
 }
 
+func TestRunDockerStreamingIdleTimeout(t *testing.T) {
+	fake := &fakeDockerAPI{
+		createResp:      container.CreateResponse{ID: "run-idle-timeout"},
+		logsReader:      io.NopCloser(bytes.NewReader(nil)),
+		waitBlocksOnCtx: true,
+	}
+	withFakeDockerAPI(t, fake)
+
+	out, runErr := RunDockerStreaming(context.Background(), RunRequest{
+		Image:              "claude:go",
+		CWD:                t.TempDir(),
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		RunIdleTimeoutSec:  1,
+	}, StreamHooks{})
+	if !errors.Is(runErr, ErrIdleTimeout) {
+		t.Fatalf("expected ErrIdleTimeout, got %v", runErr)
+	}
+	if out.ExitCode != -1 {
+		t.Fatalf("unexpected exit code: %d", out.ExitCode)
+	}
+	if len(fake.stopCalls) != 1 || fake.stopCalls[0] != "run-idle-timeout" {
+		t.Fatalf("expected stop call for run-idle-timeout, got %#v", fake.stopCalls)
+	}
+	if len(fake.removeCalls) != 1 || fake.removeCalls[0].containerID != "run-idle-timeout" {
+		t.Fatalf("expected cleanup remove for run-idle-timeout, got %#v", fake.removeCalls)
+	}
+}
+
+func TestRunDockerStreamingIdleTimeoutResetsOnLogActivity(t *testing.T) {
+	fake := &fakeDockerAPI{
+		createResp: container.CreateResponse{ID: "run-idle-reset"},
+		logsReader: delayedMuxedLogStream([]string{"tick1", "tick2", "tick3", "tick4"}, 400*time.Millisecond),
+		waitResp:   container.WaitResponse{StatusCode: 0},
+	}
+	withFakeDockerAPI(t, fake)
+
+	out, runErr := RunDockerStreaming(context.Background(), RunRequest{
+		Image:              "claude:go",
+		CWD:                t.TempDir(),
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		RunIdleTimeoutSec:  1,
+	}, StreamHooks{})
+	if runErr != nil {
+		t.Fatalf("run docker: %v", runErr)
+	}
+	if out.ExitCode != 0 {
+		t.Fatalf("unexpected exit code: %d", out.ExitCode)
+	}
+	if !strings.Contains(out.Stdout, "tick4\n") {
+		t.Fatalf("unexpected stdout: %q", out.Stdout)
+	}
+}
+
+func TestRunDockerStreamingPipelineTaskIdleTimeoutEnvOverride(t *testing.T) {
+	fake := &fakeDockerAPI{
+		createResp: container.CreateResponse{ID: "run-timeout-env"},
+		logsReader: muxedLogStream(
+			[]string{"ok"},
+			nil,
+		),
+		waitResp: container.WaitResponse{StatusCode: 0},
+	}
+	withFakeDockerAPI(t, fake)
+
+	_, runErr := RunDockerStreaming(context.Background(), RunRequest{
+		Image:                      "claude:go",
+		CWD:                        t.TempDir(),
+		SourceWorkspaceDir:         "/workspace-source",
+		Prompt:                     "build project",
+		PipelineTaskIdleTimeoutSec: 99,
+	}, StreamHooks{})
+	if runErr != nil {
+		t.Fatalf("run docker: %v", runErr)
+	}
+	if fake.createdConfig == nil {
+		t.Fatal("container config was not captured")
+	}
+	if !containsString(fake.createdConfig.Env, "PIPELINE_TASK_IDLE_TIMEOUT_SEC=99") {
+		t.Fatalf("expected PIPELINE_TASK_IDLE_TIMEOUT_SEC env, got %#v", fake.createdConfig.Env)
+	}
+}
+
 func muxedLogStream(stdoutLines, stderrLines []string) io.ReadCloser {
 	buf := &bytes.Buffer{}
 	stdout := stdcopy.NewStdWriter(buf, stdcopy.Stdout)
@@ -508,6 +594,25 @@ func muxedLogStream(stdoutLines, stderrLines []string) io.ReadCloser {
 	}
 
 	return io.NopCloser(bytes.NewReader(buf.Bytes()))
+}
+
+func delayedMuxedLogStream(stdoutLines []string, delay time.Duration) io.ReadCloser {
+	reader, writer := io.Pipe()
+
+	go func() {
+		defer writer.Close()
+		stdout := stdcopy.NewStdWriter(writer, stdcopy.Stdout)
+		for index, line := range stdoutLines {
+			if index > 0 {
+				time.Sleep(delay)
+			}
+			if _, err := io.WriteString(stdout, line+"\n"); err != nil {
+				return
+			}
+		}
+	}()
+
+	return reader
 }
 
 func containsString(items []string, want string) bool {

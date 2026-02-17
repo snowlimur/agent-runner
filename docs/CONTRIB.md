@@ -47,6 +47,8 @@ Each project using agent-cli requires `.agent-cli/config.toml`:
 image = "claude:go"
 model = "opus"             # sonnet | opus
 enable_dind = false        # optional Docker-in-Docker
+run_idle_timeout_sec = 7200            # optional, run-level idle timeout
+pipeline_task_idle_timeout_sec = 1800  # optional, default per-task idle timeout for pipeline
 
 [auth]
 github_token = "ghp_..."
@@ -67,7 +69,7 @@ user_email = "you@example.com"
 agent-cli run "build and test the project"
 
 # Prompt from file
-agent-cli run --file prompt.md
+agent-cli run --file prompt.txt
 
 # Pipeline plan
 agent-cli run --pipeline plan.yml

@@ -21,7 +21,6 @@ func TestAggregateStatsMixedRuns(t *testing.T) {
 	_, err := SaveRunRecord(dir, &RunRecord{
 		Timestamp: t1,
 		Status:    RunStatusSuccess,
-		Prompt:    PromptMetadata{Source: PromptSourceInline, PromptSHA: "a", PromptSize: 1},
 		Stream: StreamMetrics{
 			TotalJSONEvents:          10,
 			EventCounts:              map[string]int64{"assistant": 4, "result": 1},
@@ -64,7 +63,6 @@ func TestAggregateStatsMixedRuns(t *testing.T) {
 	_, err = SaveRunRecord(dir, &RunRecord{
 		Timestamp: t2,
 		Status:    RunStatusParseError,
-		Prompt:    PromptMetadata{Source: PromptSourceInline, PromptSHA: "b", PromptSize: 1},
 		Stream: StreamMetrics{
 			TotalJSONEvents:          3,
 			EventCounts:              map[string]int64{"assistant": 1, "user": 1},
@@ -181,7 +179,6 @@ func TestAggregateStatsReadsTimestampPrefixedRunDirectory(t *testing.T) {
 		RunID:     "manual-id",
 		Timestamp: time.Date(2026, 2, 13, 9, 8, 7, 123456789, time.UTC),
 		Status:    RunStatusSuccess,
-		Prompt:    PromptMetadata{Source: PromptSourceInline, PromptSHA: "abc", PromptSize: 3},
 		Normalized: result.NormalizedMetrics{
 			DurationMS: 10,
 			NumTurns:   1,
@@ -192,6 +189,53 @@ func TestAggregateStatsReadsTimestampPrefixedRunDirectory(t *testing.T) {
 		t.Fatalf("marshal record: %v", err)
 	}
 	content = append(content, '\n')
+	if err := os.WriteFile(filepath.Join(runDir, statsFileName), content, 0o644); err != nil {
+		t.Fatalf("write stats file: %v", err)
+	}
+
+	agg, err := AggregateStats(dir)
+	if err != nil {
+		t.Fatalf("aggregate stats: %v", err)
+	}
+	if agg.TotalRuns != 1 {
+		t.Fatalf("expected 1 run, got %d", agg.TotalRuns)
+	}
+	if agg.SuccessRuns != 1 {
+		t.Fatalf("expected 1 success run, got %d", agg.SuccessRuns)
+	}
+	if len(agg.SkippedFiles) != 0 {
+		t.Fatalf("expected no skipped files, got %#v", agg.SkippedFiles)
+	}
+}
+
+func TestAggregateStatsAcceptsLegacyPromptField(t *testing.T) {
+	t.Parallel()
+
+	dir := filepath.Join(t.TempDir(), "runs")
+	runDir := filepath.Join(dir, "20260213T090807-legacy")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+
+	content := []byte(`{
+  "run_id": "legacy",
+  "timestamp": "2026-02-13T09:08:07Z",
+  "status": "success",
+  "docker_exit_code": 0,
+  "cwd": "/tmp/work",
+  "prompt": {
+    "source": "inline",
+    "prompt_sha256": "abc",
+    "prompt_bytes": 3
+  },
+  "normalized": {
+    "duration_ms": 10,
+    "duration_api_ms": 0,
+    "num_turns": 1,
+    "total_cost_usd": 0
+  }
+}
+`)
 	if err := os.WriteFile(filepath.Join(runDir, statsFileName), content, 0o644); err != nil {
 		t.Fatalf("write stats file: %v", err)
 	}

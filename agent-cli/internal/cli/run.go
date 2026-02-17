@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,13 +19,10 @@ import (
 )
 
 type runOptions struct {
-	Prompt      string
-	PromptPath  string
-	PromptFrom  stats.PromptSource
-	Pipeline    string
-	PlanContent string
-	JSONOutput  bool
-	Model       string
+	Prompt     string
+	Pipeline   string
+	JSONOutput bool
+	Model      string
 }
 
 var (
@@ -52,23 +47,11 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	}
 
 	isPlanRun := strings.TrimSpace(opts.Pipeline) != ""
-	promptArtifactContent := opts.Prompt
-	if isPlanRun {
-		promptArtifactContent = opts.PlanContent
-	}
-
-	promptHash := sha256.Sum256([]byte(promptArtifactContent))
 	record := &stats.RunRecord{
 		Timestamp: time.Now().UTC(),
 		Status:    stats.RunStatusExecError,
 		CWD:       cwd,
 		Stream:    stats.NewStreamMetrics(),
-		Prompt: stats.PromptMetadata{
-			Source:     opts.PromptFrom,
-			FilePath:   opts.PromptPath,
-			PromptSHA:  hex.EncodeToString(promptHash[:]),
-			PromptSize: len(promptArtifactContent),
-		},
 	}
 	record.Stream.EnsureMaps()
 
@@ -87,17 +70,19 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	}
 
 	runOutput, runErr := runDockerStreamingFn(ctx, runner.RunRequest{
-		Image:              cfg.Docker.Image,
-		CWD:                cwd,
-		SourceWorkspaceDir: cfg.Workspace.SourceWorkspaceDir,
-		GitHubToken:        cfg.Auth.GitHubToken,
-		ClaudeToken:        cfg.Auth.ClaudeToken,
-		GitUserName:        cfg.Git.UserName,
-		GitUserEmail:       cfg.Git.UserEmail,
-		Prompt:             opts.Prompt,
-		Pipeline:           opts.Pipeline,
-		Model:              model,
-		EnableDinD:         cfg.Docker.EnableDinD,
+		Image:                      cfg.Docker.Image,
+		CWD:                        cwd,
+		SourceWorkspaceDir:         cfg.Workspace.SourceWorkspaceDir,
+		GitHubToken:                cfg.Auth.GitHubToken,
+		ClaudeToken:                cfg.Auth.ClaudeToken,
+		GitUserName:                cfg.Git.UserName,
+		GitUserEmail:               cfg.Git.UserEmail,
+		Prompt:                     opts.Prompt,
+		Pipeline:                   opts.Pipeline,
+		Model:                      model,
+		EnableDinD:                 cfg.Docker.EnableDinD,
+		RunIdleTimeoutSec:          cfg.Docker.RunIdleTimeoutSec,
+		PipelineTaskIdleTimeoutSec: cfg.Docker.PipelineTaskIdleTimeoutSec,
 	}, runner.StreamHooks{
 		OnStdoutLine: func(line string) {
 			stdoutLines = append(stdoutLines, line)
@@ -163,6 +148,10 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	}
 
 	switch {
+	case runErr != nil && errors.Is(runErr, runner.ErrIdleTimeout):
+		record.Status = stats.RunStatusError
+		record.ErrorType = "timeout"
+		record.ErrorMessage = runErr.Error()
 	case runErr != nil && errors.Is(runErr, runner.ErrInterrupted):
 		record.Status = stats.RunStatusError
 		record.ErrorType = "interrupted"
@@ -185,8 +174,12 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		record.ErrorMessage = "agent returned is_error=true"
 	case isPlanRun && record.Pipeline != nil && record.Pipeline.IsError:
 		record.Status = stats.RunStatusError
-		record.ErrorType = "pipeline_error"
-		record.ErrorMessage = "pipeline returned is_error=true"
+		if pipelineFailureIsTimeout(record.Pipeline) {
+			record.ErrorType = "pipeline_timeout"
+		} else {
+			record.ErrorType = "pipeline_error"
+		}
+		record.ErrorMessage = pipelineFailureMessage(record.Pipeline)
 	case runErr != nil:
 		record.Status = stats.RunStatusError
 		record.ErrorType = "docker_exit_error"
@@ -200,7 +193,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	if saveErr != nil {
 		return fmt.Errorf("save run statistics: %w", saveErr)
 	}
-	if err := stats.SaveRunArtifacts(filepath.Dir(savedPath), promptArtifactContent, runOutput.Stdout, runOutput.Stderr); err != nil {
+	if err := stats.SaveRunArtifacts(filepath.Dir(savedPath), runOutput.Stdout, runOutput.Stderr); err != nil {
 		return fmt.Errorf("save run artifacts: %w", err)
 	}
 
@@ -216,6 +209,9 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		printRunSummary(record)
 	}
 
+	if runErr != nil && errors.Is(runErr, runner.ErrIdleTimeout) {
+		return runErr
+	}
 	if runErr != nil && errors.Is(runErr, runner.ErrInterrupted) {
 		return runErr
 	}
@@ -225,14 +221,18 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	if parseErr != nil {
 		return parseErr
 	}
-	if runErr != nil {
-		return fmt.Errorf("docker exited with code %d", runOutput.ExitCode)
-	}
 	if !isPlanRun && parsed != nil && parsed.Agent.IsError {
 		return errors.New("agent returned is_error=true")
 	}
 	if isPlanRun && record.Pipeline != nil && record.Pipeline.IsError {
-		return errors.New("pipeline returned is_error=true")
+		message := strings.TrimSpace(record.ErrorMessage)
+		if message == "" {
+			message = pipelineFailureMessage(record.Pipeline)
+		}
+		return errors.New(message)
+	}
+	if runErr != nil {
+		return fmt.Errorf("docker exited with code %d", runOutput.ExitCode)
 	}
 
 	return nil
@@ -290,12 +290,9 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 		}
 
 		return &runOptions{
-			PromptPath:  pathForRecord,
-			PromptFrom:  stats.PromptSourcePlanFile,
-			Pipeline:    pathForRecord,
-			PlanContent: planContent,
-			JSONOutput:  jsonOutput,
-			Model:       modelOverride,
+			Pipeline:   pathForRecord,
+			JSONOutput: jsonOutput,
+			Model:      modelOverride,
 		}, nil
 	}
 
@@ -309,11 +306,6 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 			return nil, fmt.Errorf("read prompt file %s: %w", filePath, err)
 		}
 
-		pathForRecord := filePath
-		if !filepath.IsAbs(pathForRecord) {
-			pathForRecord = filepath.Join(cwd, pathForRecord)
-		}
-
 		prompt := strings.TrimSpace(string(promptBytes))
 		if prompt == "" {
 			return nil, errors.New("prompt file is empty")
@@ -321,8 +313,6 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 
 		return &runOptions{
 			Prompt:     prompt,
-			PromptPath: pathForRecord,
-			PromptFrom: stats.PromptSourceFile,
 			JSONOutput: jsonOutput,
 			Model:      modelOverride,
 		}, nil
@@ -335,7 +325,6 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 
 	return &runOptions{
 		Prompt:     prompt,
-		PromptFrom: stats.PromptSourceInline,
 		JSONOutput: jsonOutput,
 		Model:      modelOverride,
 	}, nil
@@ -412,6 +401,49 @@ func extractPipelineFailureMessage(lineSets ...[]string) string {
 	}
 
 	return fallback
+}
+
+func pipelineFailureMessage(pipeline *stats.PipelineRunRecord) string {
+	if pipeline == nil {
+		return "pipeline returned is_error=true"
+	}
+
+	for _, task := range pipeline.Tasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "error") {
+			continue
+		}
+
+		detail := strings.TrimSpace(task.ErrorMessage)
+		if detail == "" {
+			detail = fmt.Sprintf("task exited with code %d", task.ExitCode)
+		}
+		stageID := strings.TrimSpace(task.StageID)
+		taskID := strings.TrimSpace(task.TaskID)
+		if stageID != "" && taskID != "" {
+			return fmt.Sprintf("pipeline failed at %s/%s: %s", stageID, taskID, detail)
+		}
+		return "pipeline failed: " + detail
+	}
+
+	return "pipeline returned is_error=true"
+}
+
+func pipelineFailureIsTimeout(pipeline *stats.PipelineRunRecord) bool {
+	if pipeline == nil {
+		return false
+	}
+
+	for _, task := range pipeline.Tasks {
+		if !strings.EqualFold(strings.TrimSpace(task.Status), "error") {
+			continue
+		}
+		message := strings.ToLower(strings.TrimSpace(task.ErrorMessage))
+		if strings.Contains(message, "idle timeout") || strings.Contains(message, "timed out") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func printRunSummary(record *stats.RunRecord) {

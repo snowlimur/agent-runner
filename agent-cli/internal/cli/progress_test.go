@@ -218,6 +218,34 @@ func TestProgressPrinterPipelineInterleavingBySession(t *testing.T) {
 	assertNotContains(t, output, "[unbound] [Bash#tool-b")
 }
 
+func TestProgressPrinterPipelineTimeoutAndTaskError(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	printer := NewProgressPrinter(&out)
+	setSteppedClock(printer, time.Unix(0, 0), 1*time.Second)
+
+	lines := []string{
+		`{"type":"pipeline_event","event":"task_timeout","stage_id":"main","task_id":"print_version","idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`,
+		`{"type":"pipeline_event","event":"task_finish","stage_id":"main","task_id":"print_version","status":"error","error_message":"idle timeout after 30 seconds without task output"}`,
+	}
+
+	for _, line := range lines {
+		event, kind, err := result.ParseStreamLine(line)
+		if err != nil {
+			t.Fatalf("parse stream line: %v", err)
+		}
+		if kind != result.StreamLineJSONEvent {
+			t.Fatalf("unexpected stream kind: %s", kind)
+		}
+		printer.HandleEvent(event)
+	}
+
+	output := out.String()
+	assertContains(t, output, "[main/print_version] [timeout] idle timeout after 30 seconds without task output")
+	assertContains(t, output, "[main/print_version] [task:error] idle timeout after 30 seconds without task output")
+}
+
 func assertContains(t *testing.T, output, expected string) {
 	t.Helper()
 	if !strings.Contains(output, expected) {

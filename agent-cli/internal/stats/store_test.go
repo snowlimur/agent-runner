@@ -16,11 +16,6 @@ func TestSaveRunRecordCreatesFile(t *testing.T) {
 		Timestamp: time.Now().UTC(),
 		Status:    RunStatusSuccess,
 		CWD:       "/tmp/work",
-		Prompt: PromptMetadata{
-			Source:     PromptSourceInline,
-			PromptSHA:  "abc",
-			PromptSize: 3,
-		},
 	}
 
 	path, err := SaveRunRecord(dir, record)
@@ -60,12 +55,10 @@ func TestSaveRunRecordUniqueNames(t *testing.T) {
 	recordA := &RunRecord{
 		Timestamp: time.Now().UTC(),
 		Status:    RunStatusSuccess,
-		Prompt:    PromptMetadata{Source: PromptSourceInline, PromptSHA: "a", PromptSize: 1},
 	}
 	recordB := &RunRecord{
 		Timestamp: time.Now().UTC(),
 		Status:    RunStatusSuccess,
-		Prompt:    PromptMetadata{Source: PromptSourceInline, PromptSHA: "b", PromptSize: 1},
 	}
 
 	pathA, err := SaveRunRecord(dir, recordA)
@@ -95,26 +88,21 @@ func TestSaveRunRecordUniqueNames(t *testing.T) {
 	}
 }
 
-func TestSaveRunArtifactsCreatesPromptAndOutputFiles(t *testing.T) {
+func TestSaveRunArtifactsCreatesOnlyOutputFile(t *testing.T) {
 	t.Parallel()
 
 	dir := filepath.Join(t.TempDir(), "runs")
 	runDir := filepath.Join(dir, "20260215T101112-run-1")
 
-	err := SaveRunArtifacts(runDir, "build project", "stdout line\n", "stderr line\n")
+	err := SaveRunArtifacts(runDir, "stdout line\n", "stderr line\n")
 	if err != nil {
 		t.Fatalf("save artifacts: %v", err)
 	}
 
-	promptPath := filepath.Join(runDir, promptFileName)
 	outputPath := filepath.Join(runDir, outputFileName)
 
-	promptContent, err := os.ReadFile(promptPath)
-	if err != nil {
-		t.Fatalf("read prompt: %v", err)
-	}
-	if got := string(promptContent); got != "build project" {
-		t.Fatalf("unexpected prompt content: %q", got)
+	if _, err := os.Stat(filepath.Join(runDir, "prompt.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected prompt.md to be absent, got err=%v", err)
 	}
 
 	outputContent, err := os.ReadFile(outputPath)

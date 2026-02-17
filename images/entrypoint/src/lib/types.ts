@@ -34,6 +34,7 @@ export interface PipelineDefaults {
   verbosity: Verbosity;
   onError: OnErrorPolicy;
   workspace: WorkspaceMode;
+  taskIdleTimeoutSec: number;
 }
 
 export interface PipelineTask {
@@ -46,6 +47,7 @@ export interface PipelineTask {
   readOnly: boolean;
   allowSharedWrites: boolean;
   promptText: string;
+  taskIdleTimeoutSec: number;
 }
 
 export interface PipelineStage {
@@ -56,6 +58,7 @@ export interface PipelineStage {
   workspace: WorkspaceMode;
   model: Model;
   verbosity: Verbosity;
+  taskIdleTimeoutSec: number;
   tasks: PipelineTask[];
 }
 
@@ -68,6 +71,8 @@ export interface PipelinePlan {
 export interface ClaudeProcessResult {
   code: number;
   signal: NodeJS.Signals | "";
+  timedOut: boolean;
+  timeoutMessage: string;
 }
 
 export interface PipelineExecutionResult {
@@ -77,6 +82,8 @@ export interface PipelineExecutionResult {
 
 export interface RunClaudeProcessOptions extends Omit<SpawnOptions, "stdio"> {
   onStdoutLine?: (line: string) => void;
+  timeoutMs?: number;
+  onIdleTimeout?: (timeoutMs: number) => void;
 }
 
 export interface DinDRuntime {
@@ -151,7 +158,14 @@ export interface PipelineEventPayloadMap {
     workspace: WorkspaceMode;
     prompt_source: PromptSource;
     prompt_file: string;
+    task_idle_timeout_sec: number;
     started_at: string;
+  };
+  task_timeout: {
+    stage_id: string;
+    task_id: string;
+    idle_timeout_sec: number;
+    reason: string;
   };
   task_session_bind: {
     stage_id: string;

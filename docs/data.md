@@ -13,11 +13,6 @@ RunRecord
 ├── Status             RunStatus (success | error | parse_error | exec_error)
 ├── DockerExitCode     int
 ├── CWD                string
-├── Prompt             PromptMetadata
-│   ├── Source         PromptSource (inline | file | plan_file)
-│   ├── FilePath       string
-│   ├── PromptSHA      string (SHA-256)
-│   └── PromptSize     int
 ├── Pipeline           *PipelineRunRecord (optional)
 │   ├── Version        string
 │   ├── Status         string
@@ -56,7 +51,7 @@ StreamEvent
 ├── User      *UserEvent      (session_id, tool_results[], tool_use_result)
 │   ├── ToolResults[]  (tool_use_id, type, content, is_error)
 │   └── ToolUseResult  (stdout, stderr, interrupted, oldTodos, newTodos)
-├── Pipeline  *PipelineEvent  (event, stage_id, task_id, session_id)
+├── Pipeline  *PipelineEvent  (event, stage_id, task_id, session_id, status, error_message, idle_timeout_sec, reason)
 └── Result    *AgentResult    (type, subtype, is_error, usage, modelUsage, ...)
 ```
 
@@ -64,7 +59,7 @@ StreamEvent
 
 ```
 Config
-├── Docker    (image, model, enable_dind)
+├── Docker    (image, model, enable_dind, run_idle_timeout_sec, pipeline_task_idle_timeout_sec)
 ├── Auth      (github_token, claude_token)
 ├── Workspace (source_workspace_dir)
 └── Git       (user_name, user_email)
@@ -77,13 +72,13 @@ Config
 ```
 PipelinePlan
 ├── version    PipelineVersion ("v1")
-├── defaults   PipelineDefaults (model, verbosity, onError, workspace)
+├── defaults   PipelineDefaults (model, verbosity, onError, workspace, taskIdleTimeoutSec)
 └── stages[]   PipelineStage
-    ├── id, mode (sequential | parallel), maxParallel
+    ├── id, mode (sequential | parallel), maxParallel, taskIdleTimeoutSec
     ├── onError, workspace, model, verbosity
     └── tasks[]  PipelineTask
         ├── id, promptText, promptFile (PromptFileRef | null)
-        ├── onError, workspace, model, verbosity
+        ├── onError, workspace, model, verbosity, taskIdleTimeoutSec
         └── readOnly, allowSharedWrites
 ```
 
@@ -107,7 +102,8 @@ PipelineResult (emitted as final JSON on stdout)
 |-------|------------|
 | `plan_start` | version, started_at, stage_count |
 | `stage_start` | stage_id, mode, task_count, max_parallel |
-| `task_start` | stage_id, task_id, model, verbosity, workspace |
+| `task_start` | stage_id, task_id, model, verbosity, workspace, task_idle_timeout_sec |
+| `task_timeout` | stage_id, task_id, idle_timeout_sec, reason |
 | `task_session_bind` | stage_id, task_id, session_id |
 | `task_finish` | PipelineTaskResult |
 | `stage_finish` | PipelineStageResult |
@@ -121,6 +117,5 @@ PipelineResult (emitted as final JSON on stdout)
 └── runs/
     └── <YYYYMMDDTHHMMSS>-<hex_id>/     # Per-run directory
         ├── stats.json                   # RunRecord
-        ├── prompt.md                    # Prompt content
         └── output.log                   # Combined stdout+stderr
 ```

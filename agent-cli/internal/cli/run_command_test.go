@@ -81,12 +81,8 @@ func TestRunCommandSuccessStream(t *testing.T) {
 		t.Fatal("expected todo transitions")
 	}
 
-	promptContent, err := os.ReadFile(filepath.Join(saved.RunDir, "prompt.md"))
-	if err != nil {
-		t.Fatalf("read prompt file: %v", err)
-	}
-	if got := string(promptContent); got != "build project" {
-		t.Fatalf("unexpected prompt file content: %q", got)
+	if _, err := os.Stat(filepath.Join(saved.RunDir, "prompt.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected prompt.md to be absent, got err=%v", err)
 	}
 
 	outputContent, err := os.ReadFile(filepath.Join(saved.RunDir, "output.log"))
@@ -102,6 +98,9 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	}
 	if strings.Contains(string(saved.RawStatsJSON), "\"stderr_raw\"") {
 		t.Fatal("stats.json should not contain stderr_raw")
+	}
+	if strings.Contains(string(saved.RawStatsJSON), "\"prompt\":") {
+		t.Fatal("stats.json should not contain prompt")
 	}
 }
 
@@ -229,6 +228,39 @@ func TestRunCommandInterrupted(t *testing.T) {
 	}
 }
 
+func TestRunCommandIdleTimeout(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		return runner.RunOutput{
+			Stdout:   "",
+			Stderr:   "",
+			ExitCode: -1,
+		}, fmt.Errorf("%w: no log activity for 30m0s", runner.ErrIdleTimeout)
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	err := RunCommand(context.Background(), cwd, []string{"build"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "no log activity") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	record := loadSingleRunRecord(t, cwd).Record
+	if record.Status != stats.RunStatusError {
+		t.Fatalf("unexpected status: %s", record.Status)
+	}
+	if record.ErrorType != "timeout" {
+		t.Fatalf("unexpected error type: %s", record.ErrorType)
+	}
+}
+
 func TestRunCommandJSONOutputOnlyFinalResult(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
@@ -263,6 +295,53 @@ func TestRunCommandJSONOutputOnlyFinalResult(t *testing.T) {
 	output := out.String()
 	if output != resultLine+"\n" {
 		t.Fatalf("unexpected json output: %q", output)
+	}
+}
+
+func TestRunCommandFileInputDoesNotPersistPromptArtifact(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	promptPath := filepath.Join(cwd, "prompt.txt")
+	if err := os.WriteFile(promptPath, []byte("build from file"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+
+	resultLine := `{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":2,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`
+	lines := []string{resultLine}
+
+	var capturedReq runner.RunRequest
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		capturedReq = req
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	if err := RunCommand(context.Background(), cwd, []string{"--file", promptPath}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	if capturedReq.Prompt != "build from file" {
+		t.Fatalf("unexpected prompt passed to runner: %q", capturedReq.Prompt)
+	}
+
+	saved := loadSingleRunRecord(t, cwd)
+	if _, err := os.Stat(filepath.Join(saved.RunDir, "prompt.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected prompt.md to be absent, got err=%v", err)
+	}
+	if strings.Contains(string(saved.RawStatsJSON), "\"prompt\":") {
+		t.Fatal("stats.json should not contain prompt")
 	}
 }
 
@@ -317,9 +396,6 @@ func TestRunCommandPipelineJSONOutput(t *testing.T) {
 	}
 
 	saved := loadSingleRunRecord(t, cwd)
-	if saved.Record.Prompt.Source != stats.PromptSourcePlanFile {
-		t.Fatalf("unexpected prompt source: %s", saved.Record.Prompt.Source)
-	}
 	if saved.Record.Pipeline == nil {
 		t.Fatal("expected pipeline data in record")
 	}
@@ -327,12 +403,62 @@ func TestRunCommandPipelineJSONOutput(t *testing.T) {
 		t.Fatalf("unexpected pipeline task count: %d", saved.Record.Pipeline.TaskCount)
 	}
 
-	promptContent, err := os.ReadFile(filepath.Join(saved.RunDir, "prompt.md"))
-	if err != nil {
-		t.Fatalf("read prompt file: %v", err)
+	if _, err := os.Stat(filepath.Join(saved.RunDir, "prompt.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected prompt.md to be absent, got err=%v", err)
 	}
-	if got := string(promptContent); got != strings.TrimSpace(planContent) {
-		t.Fatalf("unexpected prompt file content: %q", got)
+	if strings.Contains(string(saved.RawStatsJSON), "\"prompt\":") {
+		t.Fatal("stats.json should not contain prompt")
+	}
+}
+
+func TestRunCommandPipelineFailureReturnsTaskErrorDetails(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	planPath := filepath.Join(cwd, "pipeline.yaml")
+	planContent := "version: v1\nstages:\n  - id: main\n    mode: sequential\n    tasks:\n      - id: print_version\n        prompt: hi\n"
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"error","is_error":true,"stage_count":1,"completed_stages":1,"task_count":1,"failed_task_count":1,"tasks":[{"stage_id":"main","task_id":"print_version","status":"error","on_error":"fail_fast","workspace":"shared","model":"sonnet","verbosity":"vv","prompt_source":"prompt","exit_code":124,"started_at":"2026-02-17T17:25:31Z","finished_at":"2026-02-17T17:55:31Z","duration_ms":1800000,"error_message":"idle timeout after 30 seconds without task output"}]}`
+	lines := []string{
+		`{"type":"pipeline_event","event":"task_timeout","stage_id":"main","task_id":"print_version","idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`,
+		pipelineResultLine,
+	}
+
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 1,
+		}, errors.New("container exited with code 1")
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	err := RunCommand(context.Background(), cwd, []string{"--pipeline", planPath})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	expectedMessage := "pipeline failed at main/print_version: idle timeout after 30 seconds without task output"
+	if !strings.Contains(err.Error(), expectedMessage) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	record := loadSingleRunRecord(t, cwd).Record
+	if record.ErrorType != "pipeline_timeout" {
+		t.Fatalf("unexpected error type: %s", record.ErrorType)
+	}
+	if !strings.Contains(record.ErrorMessage, expectedMessage) {
+		t.Fatalf("unexpected record error message: %q", record.ErrorMessage)
 	}
 }
 
@@ -535,6 +661,12 @@ func TestRunCommandUsesConfigEnableDinD(t *testing.T) {
 	}
 	if !capturedReq.EnableDinD {
 		t.Fatal("expected EnableDinD to be true from config")
+	}
+	if capturedReq.RunIdleTimeoutSec != config.DefaultRunIdleTimeoutSec {
+		t.Fatalf("unexpected run idle timeout sec: %d", capturedReq.RunIdleTimeoutSec)
+	}
+	if capturedReq.PipelineTaskIdleTimeoutSec != config.DefaultPipelineTaskIdleTimeoutSec {
+		t.Fatalf("unexpected pipeline task idle timeout sec: %d", capturedReq.PipelineTaskIdleTimeoutSec)
 	}
 }
 

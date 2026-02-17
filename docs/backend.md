@@ -28,6 +28,7 @@ Implements the `run` and `stats` commands.
 **progress printer** (`progress.go`):
 - Formats real-time progress lines: `HH:MM:SS [label] message`
 - Tracks tool lifecycle (start/done/output), todo transitions, pipeline task bindings
+- Emits pipeline timeout/error diagnostics (`task_timeout`, failed `task_finish`) with stage/task prefixes
 - Pipeline mode prefixes lines with `[stage_id/task_id]`
 
 ### Package: config
@@ -35,7 +36,7 @@ Implements the `run` and `stats` commands.
 Loads and validates `.agent-cli/config.toml` using a hand-written TOML parser.
 
 **Sections:**
-- `[docker]` — image, model (sonnet|opus), enable_dind
+- `[docker]` — image, model (sonnet|opus), enable_dind, run_idle_timeout_sec, pipeline_task_idle_timeout_sec
 - `[auth]` — github_token, claude_token
 - `[workspace]` — source_workspace_dir (absolute path)
 - `[git]` — user_name, user_email
@@ -68,14 +69,14 @@ Manages Docker container lifecycle using the Docker Engine API.
 - Read-only source workspace bind mount
 - Graceful interrupt handling with signal-aware cleanup
 - Log demuxing (Docker multiplexed stdout/stderr)
+- Run-level idle timeout based on last stdout/stderr activity
 
 ### Package: stats
 
 Persists and aggregates run records.
 
 **Storage:** `.agent-cli/runs/<YYYYMMDDTHHMMSS>-<hex_id>/`
-- `stats.json` — Full run record
-- `prompt.md` — Prompt content
+- `stats.json` — Full run record (without prompt payload/metadata)
 - `output.log` — Combined stdout+stderr
 
 **Aggregation:** Sums across all runs — tokens, cost, duration, tool use counts, event counts, per-model breakdowns.
@@ -110,7 +111,7 @@ Executes a validated `PipelinePlan`:
 
 Validates YAML pipeline plans:
 - Version check (`v1`)
-- Cascading defaults: plan → stage → task (model, verbosity, on_error, workspace)
+- Cascading defaults: plan → stage → task (model, verbosity, on_error, workspace, task_idle_timeout_sec)
 - Prompt resolution: inline `prompt` or `prompt_file` (relative to /workspace)
 - Safety: parallel tasks with shared workspace must declare `read_only` or `allow_shared_writes`
 

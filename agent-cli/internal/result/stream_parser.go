@@ -85,10 +85,14 @@ type UserToolUseResult struct {
 }
 
 type PipelineEvent struct {
-	Event     string `json:"event"`
-	StageID   string `json:"stage_id"`
-	TaskID    string `json:"task_id"`
-	SessionID string `json:"session_id"`
+	Event          string `json:"event"`
+	StageID        string `json:"stage_id"`
+	TaskID         string `json:"task_id"`
+	SessionID      string `json:"session_id"`
+	Status         string `json:"status"`
+	ErrorMessage   string `json:"error_message"`
+	IdleTimeoutSec int    `json:"idle_timeout_sec"`
+	Reason         string `json:"reason"`
 }
 
 func ParseStreamLine(line string) (*StreamEvent, StreamLineKind, error) {
@@ -218,20 +222,28 @@ func ParseStreamLine(line string) (*StreamEvent, StreamLineKind, error) {
 		event.Result = &agentResult
 	case "pipeline_event":
 		var payload struct {
-			Type      string `json:"type"`
-			Event     string `json:"event"`
-			StageID   string `json:"stage_id"`
-			TaskID    string `json:"task_id"`
-			SessionID string `json:"session_id"`
+			Type           string `json:"type"`
+			Event          string `json:"event"`
+			StageID        string `json:"stage_id"`
+			TaskID         string `json:"task_id"`
+			SessionID      string `json:"session_id"`
+			Status         string `json:"status"`
+			ErrorMessage   string `json:"error_message"`
+			IdleTimeoutSec int    `json:"idle_timeout_sec"`
+			Reason         string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 			return nil, StreamLineInvalidJSON, fmt.Errorf("decode pipeline event: %w", err)
 		}
 		event.Pipeline = &PipelineEvent{
-			Event:     payload.Event,
-			StageID:   payload.StageID,
-			TaskID:    payload.TaskID,
-			SessionID: payload.SessionID,
+			Event:          payload.Event,
+			StageID:        payload.StageID,
+			TaskID:         payload.TaskID,
+			SessionID:      payload.SessionID,
+			Status:         payload.Status,
+			ErrorMessage:   payload.ErrorMessage,
+			IdleTimeoutSec: payload.IdleTimeoutSec,
+			Reason:         payload.Reason,
 		}
 	}
 

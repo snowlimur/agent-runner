@@ -13,9 +13,11 @@ const (
 	configDirName  = ".agent-cli"
 	configFileName = "config.toml"
 
-	DockerModelSonnet  = "sonnet"
-	DockerModelOpus    = "opus"
-	DefaultDockerModel = DockerModelOpus
+	DockerModelSonnet                 = "sonnet"
+	DockerModelOpus                   = "opus"
+	DefaultDockerModel                = DockerModelOpus
+	DefaultRunIdleTimeoutSec          = 7200
+	DefaultPipelineTaskIdleTimeoutSec = 1800
 )
 
 // Config is the root configuration for agent-cli.
@@ -27,9 +29,11 @@ type Config struct {
 }
 
 type DockerConfig struct {
-	Image      string `toml:"image"`
-	Model      string `toml:"model"`
-	EnableDinD bool   `toml:"enable_dind"`
+	Image                      string `toml:"image"`
+	Model                      string `toml:"model"`
+	EnableDinD                 bool   `toml:"enable_dind"`
+	RunIdleTimeoutSec          int    `toml:"run_idle_timeout_sec"`
+	PipelineTaskIdleTimeoutSec int    `toml:"pipeline_task_idle_timeout_sec"`
 }
 
 type AuthConfig struct {
@@ -96,6 +100,12 @@ func (c *Config) Validate() error {
 	}
 	if !IsValidDockerModel(c.Docker.Model) {
 		return fmt.Errorf("docker.model must be one of: %s, %s", DockerModelSonnet, DockerModelOpus)
+	}
+	if c.Docker.RunIdleTimeoutSec <= 0 {
+		c.Docker.RunIdleTimeoutSec = DefaultRunIdleTimeoutSec
+	}
+	if c.Docker.PipelineTaskIdleTimeoutSec <= 0 {
+		c.Docker.PipelineTaskIdleTimeoutSec = DefaultPipelineTaskIdleTimeoutSec
 	}
 
 	if strings.TrimSpace(c.Auth.GitHubToken) == "" {
@@ -217,6 +227,22 @@ func setConfigField(cfg *Config, section, key, value string) error {
 			cfg.Docker.EnableDinD = enabled
 			return nil
 		}
+		if key == "run_idle_timeout_sec" {
+			timeoutSec, err := parsePositiveIntValue(value)
+			if err != nil {
+				return fmt.Errorf("invalid docker.run_idle_timeout_sec: %w", err)
+			}
+			cfg.Docker.RunIdleTimeoutSec = timeoutSec
+			return nil
+		}
+		if key == "pipeline_task_idle_timeout_sec" {
+			timeoutSec, err := parsePositiveIntValue(value)
+			if err != nil {
+				return fmt.Errorf("invalid docker.pipeline_task_idle_timeout_sec: %w", err)
+			}
+			cfg.Docker.PipelineTaskIdleTimeoutSec = timeoutSec
+			return nil
+		}
 	case "auth":
 		if key == "github_token" {
 			cfg.Auth.GitHubToken = value
@@ -260,6 +286,18 @@ func parseBoolValue(raw string) (bool, error) {
 	default:
 		return false, fmt.Errorf("expected true/false, got %q", raw)
 	}
+}
+
+func parsePositiveIntValue(raw string) (int, error) {
+	value := strings.TrimSpace(raw)
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("expected positive integer, got %q", raw)
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("expected positive integer, got %q", raw)
+	}
+	return parsed, nil
 }
 
 func IsValidDockerModel(model string) bool {

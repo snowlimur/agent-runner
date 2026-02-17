@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"agent-cli/internal/stats"
 )
 
 func TestParseRunArgsInline(t *testing.T) {
@@ -17,9 +15,6 @@ func TestParseRunArgsInline(t *testing.T) {
 	}
 	if opts.Prompt != "build and test" {
 		t.Fatalf("unexpected prompt: %q", opts.Prompt)
-	}
-	if opts.PromptFrom != stats.PromptSourceInline {
-		t.Fatalf("unexpected source: %s", opts.PromptFrom)
 	}
 	if opts.Model != "" {
 		t.Fatalf("unexpected model override: %q", opts.Model)
@@ -41,9 +36,6 @@ func TestParseRunArgsFile(t *testing.T) {
 	}
 	if opts.Prompt != "run tests" {
 		t.Fatalf("unexpected prompt: %q", opts.Prompt)
-	}
-	if opts.PromptFrom != stats.PromptSourceFile {
-		t.Fatalf("unexpected source: %s", opts.PromptFrom)
 	}
 	if opts.Model != "" {
 		t.Fatalf("unexpected model override: %q", opts.Model)
@@ -128,12 +120,6 @@ func TestParseRunArgsPipeline(t *testing.T) {
 	}
 	if opts.Pipeline != planFile {
 		t.Fatalf("unexpected pipeline path: %q", opts.Pipeline)
-	}
-	if opts.PromptFrom != stats.PromptSourcePlanFile {
-		t.Fatalf("unexpected source: %s", opts.PromptFrom)
-	}
-	if opts.PlanContent == "" {
-		t.Fatal("expected plan content")
 	}
 }
 

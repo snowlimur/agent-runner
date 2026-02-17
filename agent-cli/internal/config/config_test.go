@@ -20,6 +20,8 @@ func TestLoadValidConfig(t *testing.T) {
 image = "claude:go"
 model = "sonnet"
 enable_dind = true
+run_idle_timeout_sec = 123
+pipeline_task_idle_timeout_sec = 45
 
 [auth]
 github_token = "gh-token"
@@ -52,6 +54,12 @@ user_email = "test@example.com"
 	}
 	if !cfg.Docker.EnableDinD {
 		t.Fatalf("expected enable_dind=true")
+	}
+	if cfg.Docker.RunIdleTimeoutSec != 123 {
+		t.Fatalf("unexpected run idle timeout: %d", cfg.Docker.RunIdleTimeoutSec)
+	}
+	if cfg.Docker.PipelineTaskIdleTimeoutSec != 45 {
+		t.Fatalf("unexpected pipeline task idle timeout: %d", cfg.Docker.PipelineTaskIdleTimeoutSec)
 	}
 }
 
@@ -140,6 +148,16 @@ user_email = "test@example.com"
 	if cfg.Docker.EnableDinD {
 		t.Fatalf("expected enable_dind default to false")
 	}
+	if cfg.Docker.RunIdleTimeoutSec != DefaultRunIdleTimeoutSec {
+		t.Fatalf("expected default run idle timeout %d, got %d", DefaultRunIdleTimeoutSec, cfg.Docker.RunIdleTimeoutSec)
+	}
+	if cfg.Docker.PipelineTaskIdleTimeoutSec != DefaultPipelineTaskIdleTimeoutSec {
+		t.Fatalf(
+			"expected default pipeline task idle timeout %d, got %d",
+			DefaultPipelineTaskIdleTimeoutSec,
+			cfg.Docker.PipelineTaskIdleTimeoutSec,
+		)
+	}
 }
 
 func TestLoadInvalidModel(t *testing.T) {
@@ -212,6 +230,80 @@ user_email = "test@example.com"
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "invalid docker.enable_dind") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadInvalidRunIdleTimeout(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	path := filepath.Join(cwd, ".agent-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	content := `[docker]
+image = "claude:go"
+run_idle_timeout_sec = 0
+
+[auth]
+github_token = "gh-token"
+claude_token = "claude-token"
+
+[workspace]
+source_workspace_dir = "/workspace-source"
+
+[git]
+user_name = "Test User"
+user_email = "test@example.com"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(cwd)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid docker.run_idle_timeout_sec") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadInvalidPipelineTaskIdleTimeout(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	path := filepath.Join(cwd, ".agent-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	content := `[docker]
+image = "claude:go"
+pipeline_task_idle_timeout_sec = nope
+
+[auth]
+github_token = "gh-token"
+claude_token = "claude-token"
+
+[workspace]
+source_workspace_dir = "/workspace-source"
+
+[git]
+user_name = "Test User"
+user_email = "test@example.com"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(cwd)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid docker.pipeline_task_idle_timeout_sec") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

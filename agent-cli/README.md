@@ -15,6 +15,8 @@ Example:
 image = "claude:go"
 model = "opus"
 enable_dind = false
+run_idle_timeout_sec = 7200
+pipeline_task_idle_timeout_sec = 1800
 
 [auth]
 github_token = "..."
@@ -30,6 +32,8 @@ user_email = "you@example.com"
 
 `docker.model` is optional. If omitted, `opus` is used.  
 `docker.enable_dind` is optional. If omitted, `false` is used.
+`docker.run_idle_timeout_sec` is optional. If omitted, `7200` is used.
+`docker.pipeline_task_idle_timeout_sec` is optional. If omitted, `1800` is used.
 
 ## Commands
 
@@ -78,6 +82,29 @@ Show statistics as JSON:
 agent-cli stats --json
 ```
 
+## Idle timeouts
+
+`agent-cli` enforces idle-based timeouts (not wall-clock hard caps):
+- run-level idle timeout (`docker.run_idle_timeout_sec`) for the whole container run
+- pipeline task idle timeout (`docker.pipeline_task_idle_timeout_sec`) as the default for pipeline tasks
+
+Idle timeout is measured from the **last stdout/stderr activity** and resets whenever new task output appears.
+
+Pipeline plans can override task idle timeout:
+
+```yaml
+version: v1
+defaults:
+  task_idle_timeout_sec: 1800
+stages:
+  - id: main
+    task_idle_timeout_sec: 1200
+    tasks:
+      - id: build_run
+        task_idle_timeout_sec: 600
+        prompt: "Build and run the project."
+```
+
 ## DinD mode
 
 `agent-cli` can enable Docker-in-Docker for runner containers when you need nested `docker`/`docker compose` in agent tasks.
@@ -106,8 +133,7 @@ Each run creates a dedicated directory in:
 `./.agent-cli/runs/<timestamp>-<run_id>`
 
 Each run directory contains:
-- `stats.json` with run metadata, normalized metrics, and error details when present
-- `prompt.md` with the source prompt used for the run
+- `stats.json` with run metadata, normalized metrics, stream metrics, and error details when present (prompt data is not stored)
 - `output.log` with raw container output (`stdout` followed by `stderr`)
 
 Timestamp format is UTC compact:

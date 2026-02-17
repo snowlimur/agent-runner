@@ -14,7 +14,6 @@ import (
 
 const (
 	statsFileName         = "stats.json"
-	promptFileName        = "prompt.md"
 	outputFileName        = "output.log"
 	runDirTimestampFormat = "20060102T150405"
 )
@@ -58,7 +57,7 @@ func SaveRunRecord(runsDir string, record *RunRecord) (string, error) {
 	return path, nil
 }
 
-func SaveRunArtifacts(runDir string, prompt string, stdout string, stderr string) error {
+func SaveRunArtifacts(runDir string, stdout string, stderr string) error {
 	if strings.TrimSpace(runDir) == "" {
 		return errors.New("run directory is empty")
 	}
@@ -66,9 +65,6 @@ func SaveRunArtifacts(runDir string, prompt string, stdout string, stderr string
 		return fmt.Errorf("create run directory: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(runDir, promptFileName), []byte(prompt), 0o644); err != nil {
-		return fmt.Errorf("write prompt file: %w", err)
-	}
 	if err := os.WriteFile(filepath.Join(runDir, outputFileName), []byte(stdout+stderr), 0o644); err != nil {
 		return fmt.Errorf("write output log file: %w", err)
 	}

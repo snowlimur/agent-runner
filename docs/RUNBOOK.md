@@ -46,6 +46,8 @@ agent-cli help
 ## Run Artifacts
 
 Each `agent-cli run` persists artifacts to `.agent-cli/runs/<timestamp>-<id>/`:
+- `stats.json` (run record; prompt data is not stored)
+- `output.log` (combined stdout/stderr)
 
 ```bash
 # List runs
@@ -75,6 +77,15 @@ docker rm -f $(docker ps -aq --filter label=agent-cli.managed=true)
 ### Image Pull
 
 agent-cli attempts a best-effort image pull before each run. If the registry is unreachable, the local image is used.
+
+### Idle Timeouts
+
+`agent-cli` enforces idle-based timeouts:
+- `docker.run_idle_timeout_sec` (default `7200`) for the whole run
+- `docker.pipeline_task_idle_timeout_sec` (default `1800`) for pipeline tasks
+
+Pipeline YAML can override per-task idle timeout via `task_idle_timeout_sec` on defaults/stage/task.
+Idle timeout is measured from the last task stdout/stderr activity and resets on each new output chunk.
 
 ## Docker-in-Docker
 
@@ -120,6 +131,21 @@ error: pipeline result event not found in stream output
 ```
 
 Check that the YAML plan file is valid and references existing prompt files. Review the raw output in `.agent-cli/runs/<latest>/output.log`.
+
+### Run idle timeout
+
+```
+error: run idle timeout: no log activity for ...
+```
+
+Increase `docker.run_idle_timeout_sec` in `.agent-cli/config.toml` if the run is expected to stay silent for long periods.
+
+### Pipeline task idle timeout
+
+When a pipeline task stops producing output longer than the configured idle timeout:
+- entrypoint emits `pipeline_event` `task_timeout`
+- task finishes with `status=error` and timeout message
+- `agent-cli` returns a detailed error with `stage/task`
 
 ### Interrupted run
 

@@ -85,7 +85,7 @@ func TestParseStreamLineFinalResult(t *testing.T) {
 func TestParseStreamLinePipelineEvent(t *testing.T) {
 	t.Parallel()
 
-	line := `{"type":"pipeline_event","event":"task_session_bind","stage_id":"main","task_id":"build","session_id":"s1"}`
+	line := `{"type":"pipeline_event","event":"task_timeout","stage_id":"main","task_id":"build","session_id":"s1","status":"error","error_message":"idle timeout","idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`
 	event, kind, err := ParseStreamLine(line)
 	if err != nil {
 		t.Fatalf("parse line: %v", err)
@@ -96,7 +96,7 @@ func TestParseStreamLinePipelineEvent(t *testing.T) {
 	if event.Pipeline == nil {
 		t.Fatal("expected pipeline event")
 	}
-	if event.Pipeline.Event != "task_session_bind" {
+	if event.Pipeline.Event != "task_timeout" {
 		t.Fatalf("unexpected pipeline event type: %s", event.Pipeline.Event)
 	}
 	if event.Pipeline.StageID != "main" || event.Pipeline.TaskID != "build" {
@@ -104,6 +104,18 @@ func TestParseStreamLinePipelineEvent(t *testing.T) {
 	}
 	if event.Pipeline.SessionID != "s1" {
 		t.Fatalf("unexpected session id: %s", event.Pipeline.SessionID)
+	}
+	if event.Pipeline.Status != "error" {
+		t.Fatalf("unexpected status: %s", event.Pipeline.Status)
+	}
+	if event.Pipeline.ErrorMessage != "idle timeout" {
+		t.Fatalf("unexpected error message: %s", event.Pipeline.ErrorMessage)
+	}
+	if event.Pipeline.IdleTimeoutSec != 30 {
+		t.Fatalf("unexpected idle timeout sec: %d", event.Pipeline.IdleTimeoutSec)
+	}
+	if event.Pipeline.Reason == "" {
+		t.Fatal("expected reason")
 	}
 }
 

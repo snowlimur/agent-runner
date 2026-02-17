@@ -6,14 +6,6 @@ import (
 	"agent-cli/internal/result"
 )
 
-type PromptSource string
-
-const (
-	PromptSourceInline   PromptSource = "inline"
-	PromptSourceFile     PromptSource = "file"
-	PromptSourcePlanFile PromptSource = "plan_file"
-)
-
 type RunStatus string
 
 const (
@@ -23,20 +15,12 @@ const (
 	RunStatusExecError  RunStatus = "exec_error"
 )
 
-type PromptMetadata struct {
-	Source     PromptSource `json:"source"`
-	FilePath   string       `json:"file_path,omitempty"`
-	PromptSHA  string       `json:"prompt_sha256"`
-	PromptSize int          `json:"prompt_bytes"`
-}
-
 type RunRecord struct {
 	RunID          string                   `json:"run_id"`
 	Timestamp      time.Time                `json:"timestamp"`
 	Status         RunStatus                `json:"status"`
 	DockerExitCode int                      `json:"docker_exit_code"`
 	CWD            string                   `json:"cwd"`
-	Prompt         PromptMetadata           `json:"prompt"`
 	Pipeline       *PipelineRunRecord       `json:"pipeline,omitempty"`
 	AgentResult    *result.AgentResult      `json:"agent_result,omitempty"`
 	Normalized     result.NormalizedMetrics `json:"normalized"`

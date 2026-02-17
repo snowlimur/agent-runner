@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   PIPELINE_DEFAULT_ON_ERROR,
+  PIPELINE_DEFAULT_TASK_IDLE_TIMEOUT_SEC,
   PIPELINE_DEFAULT_VERBOSITY,
   PIPELINE_DEFAULT_WORKSPACE,
   PIPELINE_VERSION,
@@ -181,6 +182,10 @@ function resolveDefaults(rawPlan: Record<string, unknown>, fallbackModel: Model)
     verbosity: normalizeVerbosityValue(rawDefaults.verbosity, "defaults.verbosity", PIPELINE_DEFAULT_VERBOSITY),
     onError: normalizeOnErrorValue(rawDefaults.on_error, "defaults.on_error", PIPELINE_DEFAULT_ON_ERROR),
     workspace: normalizeWorkspaceValue(rawDefaults.workspace, "defaults.workspace", PIPELINE_DEFAULT_WORKSPACE),
+    taskIdleTimeoutSec: parsePositiveInteger(
+      rawDefaults.task_idle_timeout_sec,
+      PIPELINE_DEFAULT_TASK_IDLE_TIMEOUT_SEC,
+    ),
   };
 }
 
@@ -237,6 +242,10 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
       stage.verbosity,
       `stages[${stageIndex}].verbosity`,
       defaults.verbosity,
+    );
+    const stageTaskIdleTimeoutSec = parsePositiveInteger(
+      stage.task_idle_timeout_sec,
+      defaults.taskIdleTimeoutSec,
     );
 
     const taskIDs = new Set<string>();
@@ -311,6 +320,10 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
         task.allow_shared_writes,
         `stages[${stageIndex}].tasks[${taskIndex}].allow_shared_writes`,
       );
+      const taskIdleTimeoutSec = parsePositiveInteger(
+        task.task_idle_timeout_sec,
+        stageTaskIdleTimeoutSec,
+      );
 
       return {
         id: taskID,
@@ -322,6 +335,7 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
         readOnly: Boolean(readOnly),
         allowSharedWrites: Boolean(allowSharedWrites),
         promptText,
+        taskIdleTimeoutSec,
       };
     });
 
@@ -343,6 +357,7 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
       workspace: stageWorkspace,
       model: stageModel,
       verbosity: stageVerbosity,
+      taskIdleTimeoutSec: stageTaskIdleTimeoutSec,
       tasks,
     };
   });
