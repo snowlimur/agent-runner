@@ -12,7 +12,6 @@ import (
 func AggregateStats(runsDir string) (*Aggregate, error) {
 	agg := &Aggregate{
 		ByModel:      map[string]ModelAggregate{},
-		StreamSums:   NewStreamMetrics(),
 		SkippedFiles: []string{},
 	}
 
@@ -60,7 +59,6 @@ func AggregateStats(runsDir string) (*Aggregate, error) {
 
 		mergeMetrics(&agg.Sums, record)
 		mergeByModel(agg.ByModel, record)
-		mergeStreamMetrics(&agg.StreamSums, record.Stream)
 	}
 
 	return agg, nil
@@ -100,28 +98,5 @@ func mergeByModel(target map[string]ModelAggregate, record *RunRecord) {
 		current.WebSearchRequests += metric.WebSearchRequests
 		current.CostUSD += metric.CostUSD
 		target[model] = current
-	}
-}
-
-func mergeStreamMetrics(target *StreamMetrics, source StreamMetrics) {
-	target.EnsureMaps()
-	source.EnsureMaps()
-
-	target.TotalJSONEvents += source.TotalJSONEvents
-	target.NonJSONLines += source.NonJSONLines
-	target.InvalidJSONLines += source.InvalidJSONLines
-	target.ToolUseTotal += source.ToolUseTotal
-	target.ToolResultTotal += source.ToolResultTotal
-	target.ToolResultErrorTotal += source.ToolResultErrorTotal
-	target.UnmatchedToolUseTotal += source.UnmatchedToolUseTotal
-	target.UnmatchedToolResultTotal += source.UnmatchedToolResultTotal
-	target.TodoTransitionTotal += source.TodoTransitionTotal
-	target.TodoCompletedTotal += source.TodoCompletedTotal
-
-	for key, value := range source.EventCounts {
-		target.EventCounts[key] += value
-	}
-	for key, value := range source.ToolUseByName {
-		target.ToolUseByName[key] += value
 	}
 }

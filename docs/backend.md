@@ -16,14 +16,14 @@ Implements the `run` and `stats` commands.
 1. Parses flags: `--json`, `--model`, `--file`, `--pipeline`
 2. Loads `.agent-cli/config.toml` via `config.Load()`
 3. Calls `runner.RunDockerStreaming()` with stream hooks
-4. Stream hooks parse each stdout line as JSON, update `ProgressPrinter`, collect metrics
+4. Stream hooks parse each stdout line as JSON, update `ProgressPrinter`, collect usage metrics
 5. Extracts final result (single prompt) or pipeline result from stream
 6. Persists `RunRecord` + artifacts to `.agent-cli/runs/<timestamp>-<id>/`
 7. Prints summary or raw JSON
 
 **stats command** (`stats.go`):
 - Aggregates all run records from `.agent-cli/runs/`
-- Outputs table or JSON with token counts, costs, tool usage, event counts
+- Outputs table or JSON with token counts, costs, durations, and per-model totals
 
 **progress printer** (`progress.go`):
 - Formats real-time progress lines: `HH:MM:SS [label] message`
@@ -79,7 +79,7 @@ Persists and aggregates run records.
 - `stats.json` — Full run record (without prompt payload/metadata)
 - `output.log` — Combined stdout+stderr
 
-**Aggregation:** Sums across all runs — tokens, cost, duration, tool use counts, event counts, per-model breakdowns.
+**Aggregation:** Sums across all runs — tokens, cost, duration, and per-model breakdowns.
 
 ## TypeScript Entrypoint (images/entrypoint)
 

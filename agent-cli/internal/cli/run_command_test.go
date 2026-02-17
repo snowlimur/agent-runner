@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,18 +69,6 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	if !strings.HasSuffix(filepath.Base(saved.RunDir), expectedDirSuffix) {
 		t.Fatalf("expected run dir to end with %q, got %q", expectedDirSuffix, filepath.Base(saved.RunDir))
 	}
-	if record.Stream.TotalJSONEvents != int64(len(lines)) {
-		t.Fatalf("unexpected json event count: %d", record.Stream.TotalJSONEvents)
-	}
-	if record.Stream.ToolUseTotal != 2 {
-		t.Fatalf("unexpected tool use total: %d", record.Stream.ToolUseTotal)
-	}
-	if record.Stream.ToolResultTotal != 2 {
-		t.Fatalf("unexpected tool result total: %d", record.Stream.ToolResultTotal)
-	}
-	if record.Stream.TodoTransitionTotal == 0 {
-		t.Fatal("expected todo transitions")
-	}
 
 	if _, err := os.Stat(filepath.Join(saved.RunDir, "prompt.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected prompt.md to be absent, got err=%v", err)
@@ -134,9 +123,6 @@ func TestRunCommandParseError(t *testing.T) {
 	record := loadSingleRunRecord(t, cwd).Record
 	if record.Status != stats.RunStatusParseError {
 		t.Fatalf("unexpected status: %s", record.Status)
-	}
-	if record.Stream.NonJSONLines != 1 {
-		t.Fatalf("unexpected non-json lines: %d", record.Stream.NonJSONLines)
 	}
 }
 
@@ -515,6 +501,163 @@ func TestRunCommandPipelineSummaryShowsOnlyStatusAndTokens(t *testing.T) {
 	assertNotContains(t, output, "docker_exit_code:")
 }
 
+func TestRunCommandPipelineTaskNormalizedIncludesCostWebSearchAndOutOfOrder(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	planPath := filepath.Join(cwd, "pipeline.yaml")
+	planContent := "version: v1\nstages:\n  - id: dev\n    mode: sequential\n    tasks:\n      - id: task_a\n        prompt: a\n      - id: task_b\n        prompt: b\n"
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	resultLineA := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.25,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-opus":{"inputTokens":10,"outputTokens":3,"cacheReadInputTokens":2,"cacheCreationInputTokens":1,"webSearchRequests":2,"costUSD":0.25}},"uuid":"u1"}`
+	resultLineB := `{"type":"result","subtype":"success","is_error":false,"duration_ms":5,"duration_api_ms":6,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s2","total_cost_usd":0.05,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":1,"output_tokens":2,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-sonnet":{"inputTokens":4,"outputTokens":2,"cacheReadInputTokens":1,"cacheCreationInputTokens":0,"webSearchRequests":1,"costUSD":0.05}},"uuid":"u2"}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":2,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"task_a","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000},{"stage_id":"dev","task_id":"task_b","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000}]}`
+	lines := []string{
+		resultLineB,
+		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_a","session_id":"s1"}`,
+		resultLineA,
+		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_b","session_id":"s2"}`,
+		pipelineResultLine,
+	}
+
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	if err := RunCommand(context.Background(), cwd, []string{"--pipeline", planPath}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+
+	saved := loadSingleRunRecord(t, cwd)
+	if strings.Contains(string(saved.RawStatsJSON), "\"stream\":") {
+		t.Fatal("stats.json should not contain stream")
+	}
+
+	pipeline := saved.Record.Pipeline
+	if pipeline == nil {
+		t.Fatal("expected pipeline record")
+	}
+
+	taskA := mustFindPipelineTask(t, pipeline, "dev", "task_a")
+	if taskA.Normalized == nil {
+		t.Fatal("expected normalized metrics for task_a")
+	}
+	if taskA.Normalized.InputTokens != 10 {
+		t.Fatalf("unexpected task_a input tokens: %d", taskA.Normalized.InputTokens)
+	}
+	if taskA.Normalized.CacheCreationInputTokens != 1 {
+		t.Fatalf("unexpected task_a cache_creation_input_tokens: %d", taskA.Normalized.CacheCreationInputTokens)
+	}
+	if taskA.Normalized.CacheReadInputTokens != 2 {
+		t.Fatalf("unexpected task_a cache_read_input_tokens: %d", taskA.Normalized.CacheReadInputTokens)
+	}
+	if taskA.Normalized.OutputTokens != 3 {
+		t.Fatalf("unexpected task_a output_tokens: %d", taskA.Normalized.OutputTokens)
+	}
+	if taskA.Normalized.WebSearchRequests != 2 {
+		t.Fatalf("unexpected task_a web_search_requests: %d", taskA.Normalized.WebSearchRequests)
+	}
+	assertFloatNear(t, taskA.Normalized.CostUSD, 0.25, "task_a cost_usd")
+	modelA, ok := taskA.Normalized.ByModel["claude-opus"]
+	if !ok {
+		t.Fatal("expected claude-opus model metrics for task_a")
+	}
+	if modelA.WebSearchRequests != 2 {
+		t.Fatalf("unexpected task_a by_model web_search_requests: %d", modelA.WebSearchRequests)
+	}
+	assertFloatNear(t, modelA.CostUSD, 0.25, "task_a by_model cost_usd")
+
+	taskB := mustFindPipelineTask(t, pipeline, "dev", "task_b")
+	if taskB.Normalized == nil {
+		t.Fatal("expected normalized metrics for task_b")
+	}
+	if taskB.Normalized.InputTokens != 4 {
+		t.Fatalf("unexpected task_b input tokens: %d", taskB.Normalized.InputTokens)
+	}
+	if taskB.Normalized.WebSearchRequests != 1 {
+		t.Fatalf("unexpected task_b web_search_requests: %d", taskB.Normalized.WebSearchRequests)
+	}
+	assertFloatNear(t, taskB.Normalized.CostUSD, 0.05, "task_b cost_usd")
+	modelB, ok := taskB.Normalized.ByModel["claude-sonnet"]
+	if !ok {
+		t.Fatal("expected claude-sonnet model metrics for task_b")
+	}
+	if modelB.WebSearchRequests != 1 {
+		t.Fatalf("unexpected task_b by_model web_search_requests: %d", modelB.WebSearchRequests)
+	}
+	assertFloatNear(t, modelB.CostUSD, 0.05, "task_b by_model cost_usd")
+}
+
+func TestRunCommandPipelineTaskNormalizedOmittedWithoutTaskResult(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	planPath := filepath.Join(cwd, "pipeline.yaml")
+	planContent := "version: v1\nstages:\n  - id: dev\n    mode: sequential\n    tasks:\n      - id: task_a\n        prompt: a\n      - id: task_b\n        prompt: b\n"
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	resultLineA := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.25,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-opus":{"inputTokens":10,"outputTokens":3,"cacheReadInputTokens":2,"cacheCreationInputTokens":1,"webSearchRequests":2,"costUSD":0.25}},"uuid":"u1"}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":2,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"task_a","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000},{"stage_id":"dev","task_id":"task_b","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000}]}`
+	lines := []string{
+		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_a","session_id":"s1"}`,
+		resultLineA,
+		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_b","session_id":"s2"}`,
+		pipelineResultLine,
+	}
+
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	if err := RunCommand(context.Background(), cwd, []string{"--pipeline", planPath}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+
+	pipeline := loadSingleRunRecord(t, cwd).Record.Pipeline
+	if pipeline == nil {
+		t.Fatal("expected pipeline record")
+	}
+
+	taskA := mustFindPipelineTask(t, pipeline, "dev", "task_a")
+	if taskA.Normalized == nil {
+		t.Fatal("expected normalized metrics for task_a")
+	}
+	taskB := mustFindPipelineTask(t, pipeline, "dev", "task_b")
+	if taskB.Normalized != nil {
+		t.Fatal("expected normalized metrics to be omitted for task_b")
+	}
+}
+
 func TestRunCommandPipelineParseErrorUsesEntrypointMessage(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
@@ -667,6 +810,35 @@ func TestRunCommandUsesConfigEnableDinD(t *testing.T) {
 	}
 	if capturedReq.PipelineTaskIdleTimeoutSec != config.DefaultPipelineTaskIdleTimeoutSec {
 		t.Fatalf("unexpected pipeline task idle timeout sec: %d", capturedReq.PipelineTaskIdleTimeoutSec)
+	}
+}
+
+func mustFindPipelineTask(
+	t *testing.T,
+	pipeline *stats.PipelineRunRecord,
+	stageID string,
+	taskID string,
+) *stats.PipelineTaskRecord {
+	t.Helper()
+
+	if pipeline == nil {
+		t.Fatal("pipeline record is nil")
+	}
+	for i := range pipeline.Tasks {
+		task := &pipeline.Tasks[i]
+		if task.StageID == stageID && task.TaskID == taskID {
+			return task
+		}
+	}
+	t.Fatalf("task %s/%s not found", stageID, taskID)
+	return nil
+}
+
+func assertFloatNear(t *testing.T, got float64, want float64, field string) {
+	t.Helper()
+
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("unexpected %s: got %.12f want %.12f", field, got, want)
 	}
 }
 

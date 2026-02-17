@@ -21,20 +21,6 @@ func TestAggregateStatsMixedRuns(t *testing.T) {
 	_, err := SaveRunRecord(dir, &RunRecord{
 		Timestamp: t1,
 		Status:    RunStatusSuccess,
-		Stream: StreamMetrics{
-			TotalJSONEvents:          10,
-			EventCounts:              map[string]int64{"assistant": 4, "result": 1},
-			NonJSONLines:             1,
-			InvalidJSONLines:         0,
-			ToolUseTotal:             2,
-			ToolUseByName:            map[string]int64{"Bash": 1, "TodoWrite": 1},
-			ToolResultTotal:          2,
-			ToolResultErrorTotal:     0,
-			UnmatchedToolUseTotal:    0,
-			UnmatchedToolResultTotal: 0,
-			TodoTransitionTotal:      3,
-			TodoCompletedTotal:       1,
-		},
 		Normalized: result.NormalizedMetrics{
 			DurationMS:               100,
 			DurationAPIMS:            200,
@@ -63,20 +49,6 @@ func TestAggregateStatsMixedRuns(t *testing.T) {
 	_, err = SaveRunRecord(dir, &RunRecord{
 		Timestamp: t2,
 		Status:    RunStatusParseError,
-		Stream: StreamMetrics{
-			TotalJSONEvents:          3,
-			EventCounts:              map[string]int64{"assistant": 1, "user": 1},
-			NonJSONLines:             2,
-			InvalidJSONLines:         1,
-			ToolUseTotal:             1,
-			ToolUseByName:            map[string]int64{"Bash": 1},
-			ToolResultTotal:          1,
-			ToolResultErrorTotal:     1,
-			UnmatchedToolUseTotal:    1,
-			UnmatchedToolResultTotal: 0,
-			TodoTransitionTotal:      1,
-			TodoCompletedTotal:       0,
-		},
 		Normalized: result.NormalizedMetrics{
 			DurationMS:    50,
 			DurationAPIMS: 60,
@@ -130,18 +102,6 @@ func TestAggregateStatsMixedRuns(t *testing.T) {
 	}
 	if agg.ByModel["model-a"].InputTokens != 12 {
 		t.Fatalf("unexpected by_model input tokens: %d", agg.ByModel["model-a"].InputTokens)
-	}
-	if agg.StreamSums.TotalJSONEvents != 13 {
-		t.Fatalf("unexpected stream json events: %d", agg.StreamSums.TotalJSONEvents)
-	}
-	if agg.StreamSums.NonJSONLines != 3 {
-		t.Fatalf("unexpected stream non-json lines: %d", agg.StreamSums.NonJSONLines)
-	}
-	if agg.StreamSums.ToolUseByName["Bash"] != 2 {
-		t.Fatalf("unexpected stream tool count for Bash: %d", agg.StreamSums.ToolUseByName["Bash"])
-	}
-	if agg.StreamSums.TodoCompletedTotal != 1 {
-		t.Fatalf("unexpected todo completed transitions: %d", agg.StreamSums.TodoCompletedTotal)
 	}
 	if len(agg.SkippedFiles) != 1 || agg.SkippedFiles[0] != "broken-run/stats.json" {
 		t.Fatalf("unexpected skipped files: %#v", agg.SkippedFiles)

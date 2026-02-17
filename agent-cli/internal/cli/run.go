@@ -51,18 +51,17 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		Timestamp: time.Now().UTC(),
 		Status:    stats.RunStatusExecError,
 		CWD:       cwd,
-		Stream:    stats.NewStreamMetrics(),
 	}
-	record.Stream.EnsureMaps()
 
 	stdoutLines := make([]string, 0, 32)
 	stderrLines := make([]string, 0, 16)
-	startedToolUses := map[string]struct{}{}
-	resolvedToolResults := map[string]struct{}{}
-	lastTodoStatuses := map[string]string{}
 	streamMetrics := result.NormalizedMetrics{
 		ByModel: map[string]result.ModelMetric{},
 	}
+	sessionTaskBindings := map[string]pipelineTaskRef{}
+	taskUsageByKey := map[string]*stats.PipelineTaskNormalized{}
+	taskUsagePendingBySession := map[string]*stats.PipelineTaskNormalized{}
+	taskUsageSeen := map[string]bool{}
 
 	var progressPrinter *ProgressPrinter
 	if !opts.JSONOutput {
@@ -88,35 +87,38 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 			stdoutLines = append(stdoutLines, line)
 			event, kind, parseErr := result.ParseStreamLine(line)
 			if parseErr != nil {
-				record.Stream.InvalidJSONLines++
 				return
 			}
 
-			switch kind {
-			case result.StreamLineJSONEvent:
-				record.Stream.TotalJSONEvents++
-				if event != nil {
-					if event.Result != nil {
-						mergeNormalizedMetrics(&streamMetrics, result.ExtractMetrics(*event.Result))
-					}
-					eventKey := event.Type
-					if event.System != nil && strings.TrimSpace(event.System.Subtype) != "" {
-						eventKey = event.Type + "/" + event.System.Subtype
-					} else if event.Pipeline != nil && strings.TrimSpace(event.Pipeline.Event) != "" {
-						eventKey = event.Type + "/" + event.Pipeline.Event
-					}
-					if strings.TrimSpace(eventKey) != "" {
-						record.Stream.EventCounts[eventKey]++
-					}
-					collectStreamMetrics(event, &record.Stream, startedToolUses, resolvedToolResults, lastTodoStatuses)
-					if progressPrinter != nil {
-						progressPrinter.HandleEvent(event)
-					}
+			if kind != result.StreamLineJSONEvent || event == nil {
+				return
+			}
+
+			if event.Result != nil {
+				mergeNormalizedMetrics(&streamMetrics, result.ExtractMetrics(*event.Result))
+				if isPlanRun {
+					mergePipelineTaskUsageForResult(
+						*event.Result,
+						sessionTaskBindings,
+						taskUsageByKey,
+						taskUsagePendingBySession,
+						taskUsageSeen,
+					)
 				}
-			case result.StreamLineNonJSON:
-				record.Stream.NonJSONLines++
-			case result.StreamLineInvalidJSON:
-				record.Stream.InvalidJSONLines++
+			}
+
+			if isPlanRun {
+				bindPipelineTaskSession(
+					event,
+					sessionTaskBindings,
+					taskUsageByKey,
+					taskUsagePendingBySession,
+					taskUsageSeen,
+				)
+			}
+
+			if progressPrinter != nil {
+				progressPrinter.HandleEvent(event)
 			}
 		},
 		OnStderrLine: func(line string) {
@@ -125,7 +127,6 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	})
 	record.Normalized = streamMetrics
 	record.DockerExitCode = runOutput.ExitCode
-	record.Stream.UnmatchedToolUseTotal = countUnmatchedToolUses(startedToolUses, resolvedToolResults)
 
 	var (
 		parsed      *result.ParsedResult
@@ -136,6 +137,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		var pipelineRecord *stats.PipelineRunRecord
 		pipelineRecord, pipelineRaw, parseErr = extractPipelineResultFromStream(stdoutLines, stderrLines)
 		if parseErr == nil {
+			applyPipelineTaskUsage(pipelineRecord, taskUsageByKey, taskUsageSeen)
 			record.Pipeline = pipelineRecord
 		}
 	} else {
@@ -459,54 +461,52 @@ func printRunSummary(record *stats.RunRecord) {
 	fmt.Fprintf(runOutputWriter, "total_tokens: %d\n", totalTokens)
 }
 
-func collectStreamMetrics(
+type pipelineTaskRef struct {
+	StageID string
+	TaskID  string
+}
+
+func bindPipelineTaskSession(
 	event *result.StreamEvent,
-	metrics *stats.StreamMetrics,
-	startedToolUses map[string]struct{},
-	resolvedToolResults map[string]struct{},
-	lastTodoStatuses map[string]string,
+	sessionTaskBindings map[string]pipelineTaskRef,
+	taskUsageByKey map[string]*stats.PipelineTaskNormalized,
+	taskUsagePendingBySession map[string]*stats.PipelineTaskNormalized,
+	taskUsageSeen map[string]bool,
 ) {
-	if event == nil {
+	if event == nil || event.Pipeline == nil {
 		return
 	}
-	metrics.EnsureMaps()
-
-	if event.Assistant != nil {
-		for _, content := range event.Assistant.Content {
-			if content.ToolUse == nil {
-				continue
-			}
-			metrics.ToolUseTotal++
-			toolName := strings.TrimSpace(content.ToolUse.Name)
-			if toolName == "" {
-				toolName = "unknown"
-			}
-			metrics.ToolUseByName[toolName]++
-			startedToolUses[content.ToolUse.ID] = struct{}{}
-		}
+	if !strings.EqualFold(strings.TrimSpace(event.Pipeline.Event), "task_session_bind") {
+		return
 	}
 
-	if event.User != nil {
-		for _, item := range event.User.ToolResults {
-			metrics.ToolResultTotal++
-			if item.IsError {
-				metrics.ToolResultErrorTotal++
-			}
-			if _, ok := startedToolUses[item.ToolUseID]; !ok {
-				metrics.UnmatchedToolResultTotal++
-				continue
-			}
-			resolvedToolResults[item.ToolUseID] = struct{}{}
-		}
-
-		transitions, completed := countTodoTransitions(
-			event.User.ToolUseResult.OldTodos,
-			event.User.ToolUseResult.NewTodos,
-			lastTodoStatuses,
-		)
-		metrics.TodoTransitionTotal += transitions
-		metrics.TodoCompletedTotal += completed
+	sessionID := strings.TrimSpace(event.Pipeline.SessionID)
+	stageID := strings.TrimSpace(event.Pipeline.StageID)
+	taskID := strings.TrimSpace(event.Pipeline.TaskID)
+	if sessionID == "" || stageID == "" || taskID == "" {
+		return
 	}
+
+	ref := pipelineTaskRef{
+		StageID: stageID,
+		TaskID:  taskID,
+	}
+	sessionTaskBindings[sessionID] = ref
+
+	pending := taskUsagePendingBySession[sessionID]
+	if pending == nil {
+		return
+	}
+	key := buildPipelineTaskKey(stageID, taskID)
+	usage := taskUsageByKey[key]
+	if usage == nil {
+		value := newPipelineTaskNormalized()
+		usage = &value
+		taskUsageByKey[key] = usage
+	}
+	mergePipelineTaskNormalized(usage, *pending)
+	taskUsageSeen[key] = true
+	delete(taskUsagePendingBySession, sessionID)
 }
 
 func mergeNormalizedMetrics(target *result.NormalizedMetrics, delta result.NormalizedMetrics) {
@@ -537,43 +537,142 @@ func mergeNormalizedMetrics(target *result.NormalizedMetrics, delta result.Norma
 	}
 }
 
-func countUnmatchedToolUses(started map[string]struct{}, resolved map[string]struct{}) int64 {
-	var unmatched int64
-	for id := range started {
-		if _, ok := resolved[id]; !ok {
-			unmatched++
-		}
+func mergePipelineTaskUsageForResult(
+	agent result.AgentResult,
+	sessionTaskBindings map[string]pipelineTaskRef,
+	taskUsageByKey map[string]*stats.PipelineTaskNormalized,
+	taskUsagePendingBySession map[string]*stats.PipelineTaskNormalized,
+	taskUsageSeen map[string]bool,
+) {
+	sessionID := strings.TrimSpace(agent.SessionID)
+	if sessionID == "" {
+		return
 	}
-	return unmatched
+
+	delta := extractPipelineTaskNormalized(agent)
+
+	ref, bound := sessionTaskBindings[sessionID]
+	if !bound || strings.TrimSpace(ref.StageID) == "" || strings.TrimSpace(ref.TaskID) == "" {
+		pending := taskUsagePendingBySession[sessionID]
+		if pending == nil {
+			value := newPipelineTaskNormalized()
+			pending = &value
+			taskUsagePendingBySession[sessionID] = pending
+		}
+		mergePipelineTaskNormalized(pending, delta)
+		return
+	}
+
+	key := buildPipelineTaskKey(ref.StageID, ref.TaskID)
+	usage := taskUsageByKey[key]
+	if usage == nil {
+		value := newPipelineTaskNormalized()
+		usage = &value
+		taskUsageByKey[key] = usage
+	}
+	mergePipelineTaskNormalized(usage, delta)
+	taskUsageSeen[key] = true
 }
 
-func countTodoTransitions(oldTodos, newTodos []result.TodoItem, last map[string]string) (int64, int64) {
-	oldMap := map[string]string{}
-	for _, item := range oldTodos {
-		oldMap[item.Content] = item.Status
-	}
-	if len(oldMap) == 0 {
-		for key, status := range last {
-			oldMap[key] = status
-		}
+func applyPipelineTaskUsage(
+	pipeline *stats.PipelineRunRecord,
+	taskUsageByKey map[string]*stats.PipelineTaskNormalized,
+	taskUsageSeen map[string]bool,
+) {
+	if pipeline == nil {
+		return
 	}
 
-	var transitions int64
-	var completed int64
+	for i := range pipeline.Tasks {
+		task := &pipeline.Tasks[i]
+		key := buildPipelineTaskKey(task.StageID, task.TaskID)
+		if !taskUsageSeen[key] {
+			task.Normalized = nil
+			continue
+		}
 
-	for _, item := range newTodos {
-		previous := oldMap[item.Content]
-		if previous == "" {
-			previous = "none"
+		usage := taskUsageByKey[key]
+		if usage == nil {
+			value := newPipelineTaskNormalized()
+			task.Normalized = &value
+			continue
 		}
-		if previous != item.Status {
-			transitions++
-			if item.Status == "completed" {
-				completed++
-			}
+		value := clonePipelineTaskNormalized(*usage)
+		task.Normalized = &value
+	}
+}
+
+func extractPipelineTaskNormalized(agent result.AgentResult) stats.PipelineTaskNormalized {
+	normalized := newPipelineTaskNormalized()
+	normalized.InputTokens = agent.Usage.InputTokens
+	normalized.CacheCreationInputTokens = agent.Usage.CacheCreationInputTokens
+	normalized.CacheReadInputTokens = agent.Usage.CacheReadInputTokens
+	normalized.OutputTokens = agent.Usage.OutputTokens
+	normalized.CostUSD = agent.TotalCostUSD
+	normalized.WebSearchRequests = agent.Usage.ServerToolUse.WebSearchRequests
+
+	for modelName, usage := range agent.ModelUsage {
+		normalized.ByModel[modelName] = stats.PipelineTaskModelMetric{
+			InputTokens:              usage.InputTokens,
+			OutputTokens:             usage.OutputTokens,
+			CacheReadInputTokens:     usage.CacheReadInputTokens,
+			CacheCreationInputTokens: usage.CacheCreationInputTokens,
+			CostUSD:                  usage.CostUSD,
+			WebSearchRequests:        usage.WebSearchRequests,
 		}
-		last[item.Content] = item.Status
+	}
+	return normalized
+}
+
+func mergePipelineTaskNormalized(target *stats.PipelineTaskNormalized, delta stats.PipelineTaskNormalized) {
+	if target == nil {
+		return
 	}
 
-	return transitions, completed
+	target.InputTokens += delta.InputTokens
+	target.CacheCreationInputTokens += delta.CacheCreationInputTokens
+	target.CacheReadInputTokens += delta.CacheReadInputTokens
+	target.OutputTokens += delta.OutputTokens
+	target.CostUSD += delta.CostUSD
+	target.WebSearchRequests += delta.WebSearchRequests
+
+	if target.ByModel == nil {
+		target.ByModel = map[string]stats.PipelineTaskModelMetric{}
+	}
+	for modelName, metric := range delta.ByModel {
+		current := target.ByModel[modelName]
+		current.InputTokens += metric.InputTokens
+		current.OutputTokens += metric.OutputTokens
+		current.CacheReadInputTokens += metric.CacheReadInputTokens
+		current.CacheCreationInputTokens += metric.CacheCreationInputTokens
+		current.CostUSD += metric.CostUSD
+		current.WebSearchRequests += metric.WebSearchRequests
+		target.ByModel[modelName] = current
+	}
+}
+
+func clonePipelineTaskNormalized(source stats.PipelineTaskNormalized) stats.PipelineTaskNormalized {
+	cloned := stats.PipelineTaskNormalized{
+		InputTokens:              source.InputTokens,
+		CacheCreationInputTokens: source.CacheCreationInputTokens,
+		CacheReadInputTokens:     source.CacheReadInputTokens,
+		OutputTokens:             source.OutputTokens,
+		CostUSD:                  source.CostUSD,
+		WebSearchRequests:        source.WebSearchRequests,
+		ByModel:                  map[string]stats.PipelineTaskModelMetric{},
+	}
+	for modelName, metric := range source.ByModel {
+		cloned.ByModel[modelName] = metric
+	}
+	return cloned
+}
+
+func newPipelineTaskNormalized() stats.PipelineTaskNormalized {
+	return stats.PipelineTaskNormalized{
+		ByModel: map[string]stats.PipelineTaskModelMetric{},
+	}
+}
+
+func buildPipelineTaskKey(stageID string, taskID string) string {
+	return strings.TrimSpace(stageID) + "\x00" + strings.TrimSpace(taskID)
 }

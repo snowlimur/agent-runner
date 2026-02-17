@@ -133,16 +133,13 @@ Each run creates a dedicated directory in:
 `./.agent-cli/runs/<timestamp>-<run_id>`
 
 Each run directory contains:
-- `stats.json` with run metadata, normalized metrics, stream metrics, and error details when present (prompt data is not stored)
+- `stats.json` with run metadata, normalized metrics, per-task pipeline usage metrics (when available), and error details when present (prompt data is not stored)
 - `output.log` with raw container output (`stdout` followed by `stderr`)
 
 Timestamp format is UTC compact:
 `YYYYMMDDTHHMMSS.nnnnnnnnnZ`.
 
-Run records now also include a `stream` section with:
-- event counters (`total_json_events`, `event_counts`)
-- tool metrics (`tool_use_total`, `tool_result_total`, errors, unmatched ids)
-- todo transition counters
-- non-json / invalid-json line counters
-
-`agent-cli stats` and `agent-cli stats --json` aggregate these values into `stream_sums`.
+For pipeline runs, each task in `pipeline.tasks` can include `normalized` when usage data is available from stream `result` events. Task `normalized` includes:
+- token counters (`input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens`)
+- cost/search counters (`cost_usd`, `web_search_requests`)
+- per-model breakdown in `by_model` with the same fields

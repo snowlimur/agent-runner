@@ -22,19 +22,17 @@ RunRecord
 │   ├── TaskCount      int
 │   ├── FailedTaskCount int
 │   └── Tasks[]        PipelineTaskRecord
+│       ├── stage/task status metadata (ids, timing, exit, error)
+│       └── Normalized *PipelineTaskNormalized (optional)
+│           ├── InputTokens, CacheCreation/ReadTokens, OutputTokens
+│           ├── CostUSD, WebSearchRequests
+│           └── ByModel map[string]PipelineTaskModelMetric
 ├── AgentResult        *AgentResult (optional)
 ├── Normalized         NormalizedMetrics
 │   ├── DurationMS, DurationAPIMS, NumTurns
 │   ├── TotalCostUSD
 │   ├── InputTokens, CacheCreation/ReadTokens, OutputTokens
 │   └── ByModel        map[string]ModelMetric
-├── Stream             StreamMetrics
-│   ├── TotalJSONEvents, NonJSONLines, InvalidJSONLines
-│   ├── ToolUseTotal, ToolUseByName map
-│   ├── ToolResultTotal, ToolResultErrorTotal
-│   ├── UnmatchedToolUse/ResultTotal
-│   ├── TodoTransitionTotal, TodoCompletedTotal
-│   └── EventCounts    map[string]int64
 ├── ErrorType          string
 └── ErrorMessage       string
 ```
@@ -95,6 +93,9 @@ PipelineResult (emitted as final JSON on stdout)
     ├── exit_code, signal, started_at, finished_at, duration_ms
     └── error_message
 ```
+
+Note: `agent-cli` enriches `stats.json` pipeline tasks with optional
+`normalized` usage metrics when a task has bound `result` events.
 
 ### Pipeline Events (emitted on stdout during execution)
 

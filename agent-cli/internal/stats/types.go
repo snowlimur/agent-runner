@@ -24,7 +24,6 @@ type RunRecord struct {
 	Pipeline       *PipelineRunRecord       `json:"pipeline,omitempty"`
 	AgentResult    *result.AgentResult      `json:"agent_result,omitempty"`
 	Normalized     result.NormalizedMetrics `json:"normalized"`
-	Stream         StreamMetrics            `json:"stream,omitempty"`
 	ErrorType      string                   `json:"error_type,omitempty"`
 	ErrorMessage   string                   `json:"error_message,omitempty"`
 }
@@ -41,21 +40,41 @@ type PipelineRunRecord struct {
 }
 
 type PipelineTaskRecord struct {
-	StageID      string    `json:"stage_id"`
-	TaskID       string    `json:"task_id"`
-	Status       string    `json:"status"`
-	OnError      string    `json:"on_error"`
-	Workspace    string    `json:"workspace"`
-	Model        string    `json:"model"`
-	Verbosity    string    `json:"verbosity"`
-	PromptSource string    `json:"prompt_source"`
-	PromptFile   string    `json:"prompt_file,omitempty"`
-	ExitCode     int       `json:"exit_code"`
-	Signal       string    `json:"signal,omitempty"`
-	StartedAt    time.Time `json:"started_at"`
-	FinishedAt   time.Time `json:"finished_at"`
-	DurationMS   int64     `json:"duration_ms"`
-	ErrorMessage string    `json:"error_message,omitempty"`
+	StageID      string                  `json:"stage_id"`
+	TaskID       string                  `json:"task_id"`
+	Status       string                  `json:"status"`
+	OnError      string                  `json:"on_error"`
+	Workspace    string                  `json:"workspace"`
+	Model        string                  `json:"model"`
+	Verbosity    string                  `json:"verbosity"`
+	PromptSource string                  `json:"prompt_source"`
+	PromptFile   string                  `json:"prompt_file,omitempty"`
+	ExitCode     int                     `json:"exit_code"`
+	Signal       string                  `json:"signal,omitempty"`
+	StartedAt    time.Time               `json:"started_at"`
+	FinishedAt   time.Time               `json:"finished_at"`
+	DurationMS   int64                   `json:"duration_ms"`
+	Normalized   *PipelineTaskNormalized `json:"normalized,omitempty"`
+	ErrorMessage string                  `json:"error_message,omitempty"`
+}
+
+type PipelineTaskNormalized struct {
+	InputTokens              int64                              `json:"input_tokens"`
+	CacheCreationInputTokens int64                              `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64                              `json:"cache_read_input_tokens"`
+	OutputTokens             int64                              `json:"output_tokens"`
+	CostUSD                  float64                            `json:"cost_usd"`
+	WebSearchRequests        int64                              `json:"web_search_requests"`
+	ByModel                  map[string]PipelineTaskModelMetric `json:"by_model"`
+}
+
+type PipelineTaskModelMetric struct {
+	InputTokens              int64   `json:"input_tokens"`
+	OutputTokens             int64   `json:"output_tokens"`
+	CacheReadInputTokens     int64   `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64   `json:"cache_creation_input_tokens"`
+	CostUSD                  float64 `json:"cost_usd"`
+	WebSearchRequests        int64   `json:"web_search_requests"`
 }
 
 type Aggregate struct {
@@ -66,7 +85,6 @@ type Aggregate struct {
 	FirstRunAt     *time.Time                `json:"first_run_at,omitempty"`
 	LastRunAt      *time.Time                `json:"last_run_at,omitempty"`
 	Sums           AggregateMetrics          `json:"sums"`
-	StreamSums     StreamMetrics             `json:"stream_sums"`
 	ByModel        map[string]ModelAggregate `json:"by_model"`
 	SkippedFiles   []string                  `json:"skipped_files"`
 }
@@ -89,35 +107,4 @@ type ModelAggregate struct {
 	CacheCreationInputTokens int64   `json:"cache_creation_input_tokens"`
 	WebSearchRequests        int64   `json:"web_search_requests"`
 	CostUSD                  float64 `json:"cost_usd"`
-}
-
-type StreamMetrics struct {
-	TotalJSONEvents          int64            `json:"total_json_events"`
-	EventCounts              map[string]int64 `json:"event_counts"`
-	NonJSONLines             int64            `json:"non_json_lines"`
-	InvalidJSONLines         int64            `json:"invalid_json_lines"`
-	ToolUseTotal             int64            `json:"tool_use_total"`
-	ToolUseByName            map[string]int64 `json:"tool_use_by_name"`
-	ToolResultTotal          int64            `json:"tool_result_total"`
-	ToolResultErrorTotal     int64            `json:"tool_result_error_total"`
-	UnmatchedToolUseTotal    int64            `json:"unmatched_tool_use_total"`
-	UnmatchedToolResultTotal int64            `json:"unmatched_tool_result_total"`
-	TodoTransitionTotal      int64            `json:"todo_transition_total"`
-	TodoCompletedTotal       int64            `json:"todo_completed_transition_total"`
-}
-
-func NewStreamMetrics() StreamMetrics {
-	return StreamMetrics{
-		EventCounts:   map[string]int64{},
-		ToolUseByName: map[string]int64{},
-	}
-}
-
-func (m *StreamMetrics) EnsureMaps() {
-	if m.EventCounts == nil {
-		m.EventCounts = map[string]int64{}
-	}
-	if m.ToolUseByName == nil {
-		m.ToolUseByName = map[string]int64{}
-	}
 }

@@ -69,43 +69,6 @@ func printStatsTable(agg *stats.Aggregate) {
 	fmt.Printf("  Cache Read Tokens: %d\n", agg.Sums.CacheReadInputTokens)
 	fmt.Printf("  Output Tokens: %d\n", agg.Sums.OutputTokens)
 
-	fmt.Println()
-	fmt.Println("Stream")
-	fmt.Printf("  JSON Events: %d\n", agg.StreamSums.TotalJSONEvents)
-	fmt.Printf("  Non-JSON Lines: %d\n", agg.StreamSums.NonJSONLines)
-	fmt.Printf("  Invalid JSON Lines: %d\n", agg.StreamSums.InvalidJSONLines)
-	fmt.Printf("  Tool Use: %d\n", agg.StreamSums.ToolUseTotal)
-	fmt.Printf("  Tool Result: %d\n", agg.StreamSums.ToolResultTotal)
-	fmt.Printf("  Tool Result Errors: %d\n", agg.StreamSums.ToolResultErrorTotal)
-	fmt.Printf("  Unmatched Tool Uses: %d\n", agg.StreamSums.UnmatchedToolUseTotal)
-	fmt.Printf("  Unmatched Tool Results: %d\n", agg.StreamSums.UnmatchedToolResultTotal)
-	fmt.Printf("  Todo Transitions: %d\n", agg.StreamSums.TodoTransitionTotal)
-	fmt.Printf("  Todo Completed Transitions: %d\n", agg.StreamSums.TodoCompletedTotal)
-
-	if len(agg.StreamSums.EventCounts) > 0 {
-		fmt.Println("  Event Counts")
-		eventTypes := make([]string, 0, len(agg.StreamSums.EventCounts))
-		for key := range agg.StreamSums.EventCounts {
-			eventTypes = append(eventTypes, key)
-		}
-		sort.Strings(eventTypes)
-		for _, key := range eventTypes {
-			fmt.Printf("    %s: %d\n", key, agg.StreamSums.EventCounts[key])
-		}
-	}
-
-	if len(agg.StreamSums.ToolUseByName) > 0 {
-		fmt.Println("  Tool Use By Name")
-		toolNames := make([]string, 0, len(agg.StreamSums.ToolUseByName))
-		for key := range agg.StreamSums.ToolUseByName {
-			toolNames = append(toolNames, key)
-		}
-		sort.Strings(toolNames)
-		for _, key := range toolNames {
-			fmt.Printf("    %s: %d\n", key, agg.StreamSums.ToolUseByName[key])
-		}
-	}
-
 	if len(agg.ByModel) > 0 {
 		fmt.Println()
 		fmt.Println("By Model")
