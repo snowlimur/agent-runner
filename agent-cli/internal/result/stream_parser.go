@@ -85,14 +85,35 @@ type UserToolUseResult struct {
 }
 
 type PipelineEvent struct {
-	Event          string `json:"event"`
-	StageID        string `json:"stage_id"`
-	TaskID         string `json:"task_id"`
-	SessionID      string `json:"session_id"`
-	Status         string `json:"status"`
-	ErrorMessage   string `json:"error_message"`
-	IdleTimeoutSec int    `json:"idle_timeout_sec"`
-	Reason         string `json:"reason"`
+	Event              string `json:"event"`
+	Version            string `json:"version"`
+	StageID            string `json:"stage_id"`
+	TaskID             string `json:"task_id"`
+	SessionID          string `json:"session_id"`
+	Status             string `json:"status"`
+	Mode               string `json:"mode"`
+	Model              string `json:"model"`
+	Verbosity          string `json:"verbosity"`
+	Workspace          string `json:"workspace"`
+	OnError            string `json:"on_error"`
+	PromptSource       string `json:"prompt_source"`
+	PromptFile         string `json:"prompt_file"`
+	Signal             string `json:"signal"`
+	StartedAt          string `json:"started_at"`
+	FinishedAt         string `json:"finished_at"`
+	ErrorMessage       string `json:"error_message"`
+	Reason             string `json:"reason"`
+	StageCount         int    `json:"stage_count"`
+	CompletedStages    int    `json:"completed_stages"`
+	TaskCount          int    `json:"task_count"`
+	FailedTaskCount    int    `json:"failed_task_count"`
+	CompletedTasks     int    `json:"completed_tasks"`
+	FailedTasks        int    `json:"failed_tasks"`
+	MaxParallel        int    `json:"max_parallel"`
+	IdleTimeoutSec     int    `json:"idle_timeout_sec"`
+	TaskIdleTimeoutSec int    `json:"task_idle_timeout_sec"`
+	ExitCode           int    `json:"exit_code"`
+	DurationMS         int64  `json:"duration_ms"`
 }
 
 func ParseStreamLine(line string) (*StreamEvent, StreamLineKind, error) {
@@ -222,28 +243,70 @@ func ParseStreamLine(line string) (*StreamEvent, StreamLineKind, error) {
 		event.Result = &agentResult
 	case "pipeline_event":
 		var payload struct {
-			Type           string `json:"type"`
-			Event          string `json:"event"`
-			StageID        string `json:"stage_id"`
-			TaskID         string `json:"task_id"`
-			SessionID      string `json:"session_id"`
-			Status         string `json:"status"`
-			ErrorMessage   string `json:"error_message"`
-			IdleTimeoutSec int    `json:"idle_timeout_sec"`
-			Reason         string `json:"reason"`
+			Type               string `json:"type"`
+			Event              string `json:"event"`
+			Version            string `json:"version"`
+			StageID            string `json:"stage_id"`
+			TaskID             string `json:"task_id"`
+			SessionID          string `json:"session_id"`
+			Status             string `json:"status"`
+			Mode               string `json:"mode"`
+			Model              string `json:"model"`
+			Verbosity          string `json:"verbosity"`
+			Workspace          string `json:"workspace"`
+			OnError            string `json:"on_error"`
+			PromptSource       string `json:"prompt_source"`
+			PromptFile         string `json:"prompt_file"`
+			Signal             string `json:"signal"`
+			StartedAt          string `json:"started_at"`
+			FinishedAt         string `json:"finished_at"`
+			ErrorMessage       string `json:"error_message"`
+			Reason             string `json:"reason"`
+			StageCount         int    `json:"stage_count"`
+			CompletedStages    int    `json:"completed_stages"`
+			TaskCount          int    `json:"task_count"`
+			FailedTaskCount    int    `json:"failed_task_count"`
+			CompletedTasks     int    `json:"completed_tasks"`
+			FailedTasks        int    `json:"failed_tasks"`
+			MaxParallel        int    `json:"max_parallel"`
+			IdleTimeoutSec     int    `json:"idle_timeout_sec"`
+			TaskIdleTimeoutSec int    `json:"task_idle_timeout_sec"`
+			ExitCode           int    `json:"exit_code"`
+			DurationMS         int64  `json:"duration_ms"`
 		}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 			return nil, StreamLineInvalidJSON, fmt.Errorf("decode pipeline event: %w", err)
 		}
 		event.Pipeline = &PipelineEvent{
-			Event:          payload.Event,
-			StageID:        payload.StageID,
-			TaskID:         payload.TaskID,
-			SessionID:      payload.SessionID,
-			Status:         payload.Status,
-			ErrorMessage:   payload.ErrorMessage,
-			IdleTimeoutSec: payload.IdleTimeoutSec,
-			Reason:         payload.Reason,
+			Event:              payload.Event,
+			Version:            payload.Version,
+			StageID:            payload.StageID,
+			TaskID:             payload.TaskID,
+			SessionID:          payload.SessionID,
+			Status:             payload.Status,
+			Mode:               payload.Mode,
+			Model:              payload.Model,
+			Verbosity:          payload.Verbosity,
+			Workspace:          payload.Workspace,
+			OnError:            payload.OnError,
+			PromptSource:       payload.PromptSource,
+			PromptFile:         payload.PromptFile,
+			Signal:             payload.Signal,
+			StartedAt:          payload.StartedAt,
+			FinishedAt:         payload.FinishedAt,
+			ErrorMessage:       payload.ErrorMessage,
+			Reason:             payload.Reason,
+			StageCount:         payload.StageCount,
+			CompletedStages:    payload.CompletedStages,
+			TaskCount:          payload.TaskCount,
+			FailedTaskCount:    payload.FailedTaskCount,
+			CompletedTasks:     payload.CompletedTasks,
+			FailedTasks:        payload.FailedTasks,
+			MaxParallel:        payload.MaxParallel,
+			IdleTimeoutSec:     payload.IdleTimeoutSec,
+			TaskIdleTimeoutSec: payload.TaskIdleTimeoutSec,
+			ExitCode:           payload.ExitCode,
+			DurationMS:         payload.DurationMS,
 		}
 	}
 

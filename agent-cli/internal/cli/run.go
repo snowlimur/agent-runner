@@ -47,6 +47,8 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	}
 
 	isPlanRun := strings.TrimSpace(opts.Pipeline) != ""
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	record := &stats.RunRecord{
 		Timestamp: time.Now().UTC(),
 		Status:    stats.RunStatusExecError,
@@ -63,12 +65,27 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	taskUsagePendingBySession := map[string]*stats.PipelineTaskNormalized{}
 	taskUsageSeen := map[string]bool{}
 
-	var progressPrinter *ProgressPrinter
+	var progressUI *ProgressTUI
 	if !opts.JSONOutput {
-		progressPrinter = NewProgressPrinter(runOutputWriter)
+		progressUI = NewProgressTUI(runCtx, runOutputWriter, os.Stdin, isPlanRun, cancelRun)
+		progressUI.Start()
 	}
+	progressClosed := false
+	closeProgress := func() error {
+		if progressUI == nil || progressClosed {
+			return nil
+		}
+		progressClosed = true
+		progressUI.Finish(record)
+		return progressUI.Wait()
+	}
+	defer func() {
+		if err := closeProgress(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: render progress ui: %v\n", err)
+		}
+	}()
 
-	runOutput, runErr := runDockerStreamingFn(ctx, runner.RunRequest{
+	runOutput, runErr := runDockerStreamingFn(runCtx, runner.RunRequest{
 		Image:                      cfg.Docker.Image,
 		CWD:                        cwd,
 		SourceWorkspaceDir:         cfg.Workspace.SourceWorkspaceDir,
@@ -117,8 +134,8 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 				)
 			}
 
-			if progressPrinter != nil {
-				progressPrinter.HandleEvent(event)
+			if progressUI != nil {
+				progressUI.SendEvent(event)
 			}
 		},
 		OnStderrLine: func(line string) {
@@ -207,8 +224,11 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		} else {
 			fmt.Fprintln(runOutputWriter, string(parsed.Raw))
 		}
-	} else if !opts.JSONOutput {
-		printRunSummary(record)
+	}
+	if !opts.JSONOutput {
+		if err := closeProgress(); err != nil {
+			return fmt.Errorf("render progress ui: %w", err)
+		}
 	}
 
 	if runErr != nil && errors.Is(runErr, runner.ErrIdleTimeout) {
@@ -448,17 +468,26 @@ func pipelineFailureIsTimeout(pipeline *stats.PipelineRunRecord) bool {
 	return false
 }
 
-func printRunSummary(record *stats.RunRecord) {
-	fmt.Fprintf(runOutputWriter, "status: %s\n", record.Status)
-	fmt.Fprintf(runOutputWriter, "input_tokens: %d\n", record.Normalized.InputTokens)
-	fmt.Fprintf(runOutputWriter, "cache_creation_input_tokens: %d\n", record.Normalized.CacheCreationInputTokens)
-	fmt.Fprintf(runOutputWriter, "cache_read_input_tokens: %d\n", record.Normalized.CacheReadInputTokens)
-	fmt.Fprintf(runOutputWriter, "output_tokens: %d\n", record.Normalized.OutputTokens)
+func runSummaryLines(record *stats.RunRecord) []string {
 	totalTokens := record.Normalized.InputTokens +
 		record.Normalized.CacheCreationInputTokens +
 		record.Normalized.CacheReadInputTokens +
 		record.Normalized.OutputTokens
-	fmt.Fprintf(runOutputWriter, "total_tokens: %d\n", totalTokens)
+
+	return []string{
+		fmt.Sprintf("status: %s", record.Status),
+		fmt.Sprintf("input_tokens: %d", record.Normalized.InputTokens),
+		fmt.Sprintf("cache_creation_input_tokens: %d", record.Normalized.CacheCreationInputTokens),
+		fmt.Sprintf("cache_read_input_tokens: %d", record.Normalized.CacheReadInputTokens),
+		fmt.Sprintf("output_tokens: %d", record.Normalized.OutputTokens),
+		fmt.Sprintf("total_tokens: %d", totalTokens),
+	}
+}
+
+func printRunSummary(record *stats.RunRecord) {
+	for _, line := range runSummaryLines(record) {
+		fmt.Fprintln(runOutputWriter, line)
+	}
 }
 
 type pipelineTaskRef struct {

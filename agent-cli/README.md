@@ -49,12 +49,19 @@ Run with model override:
 agent-cli run --model sonnet "build and test the project"
 ```
 
-By default, `run` prints compact live progress from stream-json events:
-- init line with session/model
-- tool start/done lines with `tool_use_id`
-- in pipeline mode, each progress line is prefixed with `[stage_id/task_id]`
-- todo status transitions
-- final summary with `status` and token usage (`input/cache/output/total`)
+By default, `run` uses a Bubble Tea TUI:
+- top line: current run/pipeline status
+- next level: stage-level state
+- next level: task-level state with tool uses and token counters
+- next level: only active (started but not finished) steps
+- when a task completes, its full `result` text is shown
+- `Ctrl+O` toggles compact vs expanded active-step view
+- after pipeline completion, a task stats table is printed with:
+  - `STAGE/TASK`, `STATUS`, `DURATION`, `TOOL_USES`, `TOKENS`, `CACHE_READ`, `COST_USD`
+
+For non-pipeline runs, the TUI footer keeps the final summary fields:
+`status`, `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`,
+`output_tokens`, `total_tokens`.
 
 Run with prompt file:
 

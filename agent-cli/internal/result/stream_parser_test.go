@@ -85,7 +85,7 @@ func TestParseStreamLineFinalResult(t *testing.T) {
 func TestParseStreamLinePipelineEvent(t *testing.T) {
 	t.Parallel()
 
-	line := `{"type":"pipeline_event","event":"task_timeout","stage_id":"main","task_id":"build","session_id":"s1","status":"error","error_message":"idle timeout","idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`
+	line := `{"type":"pipeline_event","event":"task_finish","version":"v1","stage_id":"main","task_id":"build","session_id":"s1","status":"error","mode":"parallel","model":"opus","verbosity":"vv","workspace":"shared","on_error":"fail_fast","prompt_source":"prompt","prompt_file":"","exit_code":124,"signal":"","started_at":"2026-02-17T17:25:31Z","finished_at":"2026-02-17T17:55:31Z","duration_ms":1800000,"error_message":"idle timeout","stage_count":2,"completed_stages":1,"task_count":3,"failed_task_count":1,"completed_tasks":2,"failed_tasks":1,"max_parallel":2,"task_idle_timeout_sec":30,"idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`
 	event, kind, err := ParseStreamLine(line)
 	if err != nil {
 		t.Fatalf("parse line: %v", err)
@@ -96,17 +96,68 @@ func TestParseStreamLinePipelineEvent(t *testing.T) {
 	if event.Pipeline == nil {
 		t.Fatal("expected pipeline event")
 	}
-	if event.Pipeline.Event != "task_timeout" {
+	if event.Pipeline.Event != "task_finish" {
 		t.Fatalf("unexpected pipeline event type: %s", event.Pipeline.Event)
 	}
 	if event.Pipeline.StageID != "main" || event.Pipeline.TaskID != "build" {
 		t.Fatalf("unexpected pipeline task ref: %+v", event.Pipeline)
+	}
+	if event.Pipeline.Version != "v1" {
+		t.Fatalf("unexpected version: %s", event.Pipeline.Version)
 	}
 	if event.Pipeline.SessionID != "s1" {
 		t.Fatalf("unexpected session id: %s", event.Pipeline.SessionID)
 	}
 	if event.Pipeline.Status != "error" {
 		t.Fatalf("unexpected status: %s", event.Pipeline.Status)
+	}
+	if event.Pipeline.Mode != "parallel" {
+		t.Fatalf("unexpected mode: %s", event.Pipeline.Mode)
+	}
+	if event.Pipeline.Model != "opus" {
+		t.Fatalf("unexpected model: %s", event.Pipeline.Model)
+	}
+	if event.Pipeline.Verbosity != "vv" {
+		t.Fatalf("unexpected verbosity: %s", event.Pipeline.Verbosity)
+	}
+	if event.Pipeline.Workspace != "shared" {
+		t.Fatalf("unexpected workspace: %s", event.Pipeline.Workspace)
+	}
+	if event.Pipeline.OnError != "fail_fast" {
+		t.Fatalf("unexpected on_error: %s", event.Pipeline.OnError)
+	}
+	if event.Pipeline.PromptSource != "prompt" {
+		t.Fatalf("unexpected prompt_source: %s", event.Pipeline.PromptSource)
+	}
+	if event.Pipeline.ExitCode != 124 {
+		t.Fatalf("unexpected exit code: %d", event.Pipeline.ExitCode)
+	}
+	if event.Pipeline.DurationMS != 1800000 {
+		t.Fatalf("unexpected duration: %d", event.Pipeline.DurationMS)
+	}
+	if event.Pipeline.StageCount != 2 {
+		t.Fatalf("unexpected stage_count: %d", event.Pipeline.StageCount)
+	}
+	if event.Pipeline.CompletedStages != 1 {
+		t.Fatalf("unexpected completed_stages: %d", event.Pipeline.CompletedStages)
+	}
+	if event.Pipeline.TaskCount != 3 {
+		t.Fatalf("unexpected task_count: %d", event.Pipeline.TaskCount)
+	}
+	if event.Pipeline.FailedTaskCount != 1 {
+		t.Fatalf("unexpected failed_task_count: %d", event.Pipeline.FailedTaskCount)
+	}
+	if event.Pipeline.CompletedTasks != 2 {
+		t.Fatalf("unexpected completed_tasks: %d", event.Pipeline.CompletedTasks)
+	}
+	if event.Pipeline.FailedTasks != 1 {
+		t.Fatalf("unexpected failed_tasks: %d", event.Pipeline.FailedTasks)
+	}
+	if event.Pipeline.MaxParallel != 2 {
+		t.Fatalf("unexpected max_parallel: %d", event.Pipeline.MaxParallel)
+	}
+	if event.Pipeline.TaskIdleTimeoutSec != 30 {
+		t.Fatalf("unexpected task_idle_timeout_sec: %d", event.Pipeline.TaskIdleTimeoutSec)
 	}
 	if event.Pipeline.ErrorMessage != "idle timeout" {
 		t.Fatalf("unexpected error message: %s", event.Pipeline.ErrorMessage)

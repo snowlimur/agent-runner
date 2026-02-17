@@ -52,10 +52,11 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	}
 
 	output := out.String()
-	assertContains(t, output, "[init] session=s1 model=claude-sonnet")
-	assertContains(t, output, "[Bash#tool-bash:start] go version")
-	assertContains(t, output, "[Bash#tool-bash:done] ok |")
-	assertContains(t, output, "[Bash#tool-bash:output] go version go1.26.0 linux/arm64")
+	assertContains(t, output, "Run completed")
+	assertContains(t, output, "run")
+	assertContains(t, output, "prompt")
+	assertContains(t, output, "prompt · success")
+	assertContains(t, output, "ok")
 	assertContains(t, output, "status: success")
 	assertContains(t, output, "input_tokens: 10")
 	assertContains(t, output, "cache_creation_input_tokens: 3")
@@ -448,7 +449,7 @@ func TestRunCommandPipelineFailureReturnsTaskErrorDetails(t *testing.T) {
 	}
 }
 
-func TestRunCommandPipelineSummaryShowsOnlyStatusAndTokens(t *testing.T) {
+func TestRunCommandPipelineSummaryShowsTaskStatsTable(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
 
@@ -490,12 +491,12 @@ func TestRunCommandPipelineSummaryShowsOnlyStatusAndTokens(t *testing.T) {
 	}
 
 	output := out.String()
-	assertContains(t, output, "status: success")
-	assertContains(t, output, "input_tokens: 14")
-	assertContains(t, output, "cache_creation_input_tokens: 1")
-	assertContains(t, output, "cache_read_input_tokens: 3")
-	assertContains(t, output, "output_tokens: 5")
-	assertContains(t, output, "total_tokens: 23")
+	assertContains(t, output, "Pipeline completed")
+	assertContains(t, output, "Pipeline Task Stats")
+	assertContains(t, output, "STAGE/TASK")
+	assertContains(t, output, "TOOL_USES")
+	assertContains(t, output, "CACHE_READ")
+	assertContains(t, output, "COST_USD")
 	assertNotContains(t, output, "run_id:")
 	assertNotContains(t, output, "stats_file:")
 	assertNotContains(t, output, "docker_exit_code:")
