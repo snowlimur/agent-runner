@@ -11,6 +11,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -29,9 +30,11 @@ import (
 
 const (
 	defaultModel                    = "opus"
+	defaultDockerMode               = dockerModeNone
 	defaultRunIdleTimeoutSeconds    = 7200
 	defaultPipelineTaskIdleTimeout  = 1800
 	containerWorkspaceDir           = "/workspace"
+	hostDockerSocketPath            = "/var/run/docker.sock"
 	containerStopTimeoutSeconds     = 10
 	containerCleanupTimeout         = 15 * time.Second
 	interruptedLogDrainTimeout      = 5 * time.Second
@@ -41,6 +44,13 @@ const (
 	managedContainerLabelKey        = "agent-cli.managed"
 	managedContainerLabelValue      = "true"
 	managedContainerCWDHashLabelKey = "agent-cli.cwd_hash"
+
+	dockerModeNone = "none"
+	dockerModeDinD = "dind"
+	dockerModeDooD = "dood"
+
+	dindStorageDriverOverlay2 = "overlay2"
+	dindStorageDriverVFS      = "vfs"
 )
 
 var (
@@ -71,13 +81,14 @@ type dockerAPI interface {
 }
 
 type runSpec struct {
-	HostDir     string
-	Model       string
-	CommandArgs []string
-	Env         []string
-	Labels      map[string]string
-	CWDHash     string
-	EnableDinD  bool
+	HostDir           string
+	Model             string
+	CommandArgs       []string
+	Env               []string
+	Labels            map[string]string
+	CWDHash           string
+	DockerMode        string
+	DinDStorageDriver string
 }
 
 type RunRequest struct {
@@ -93,7 +104,8 @@ type RunRequest struct {
 	TemplateVars               map[string]string
 	Model                      string
 	Debug                      bool
-	EnableDinD                 bool
+	DockerMode                 string
+	DinDStorageDriver          string
 	RunIdleTimeoutSec          int
 	PipelineTaskIdleTimeoutSec int
 }
@@ -196,19 +208,27 @@ func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) 
 	}
 
 	networkMode := container.NetworkMode("host")
-	if spec.EnableDinD {
+	privileged := false
+	binds := []string{
+		fmt.Sprintf("%s:%s:ro", spec.HostDir, req.SourceWorkspaceDir),
+	}
+
+	if spec.DockerMode == dockerModeDinD {
 		// DinD daemon should not share host network namespace; otherwise it can mutate
 		// host iptables rules and break host-side docker compose.
 		networkMode = container.NetworkMode("bridge")
+		privileged = true
+	}
+
+	if spec.DockerMode == dockerModeDooD {
+		binds = append(binds, fmt.Sprintf("%s:%s", hostDockerSocketPath, hostDockerSocketPath))
 	}
 
 	hostConfig := &container.HostConfig{
 		NetworkMode: networkMode,
 		AutoRemove:  true,
-		Privileged:  spec.EnableDinD,
-		Binds: []string{
-			fmt.Sprintf("%s:%s:ro", spec.HostDir, req.SourceWorkspaceDir),
-		},
+		Privileged:  privileged,
+		Binds:       binds,
 	}
 
 	createResp, err := dockerClient.ContainerCreate(runCtx, containerConfig, hostConfig, nil, nil, "")
@@ -345,6 +365,31 @@ func buildRunSpec(req RunRequest) (runSpec, error) {
 		return runSpec{}, errors.New("model must be one of: sonnet, opus")
 	}
 
+	dockerMode := normalizeDockerMode(req.DockerMode)
+	if dockerMode == "" {
+		dockerMode = defaultDockerMode
+	}
+	if !isValidDockerMode(dockerMode) {
+		return runSpec{}, fmt.Errorf(
+			"docker mode must be one of: %s, %s, %s",
+			dockerModeNone,
+			dockerModeDinD,
+			dockerModeDooD,
+		)
+	}
+
+	dindStorageDriver := normalizeDinDStorageDriver(req.DinDStorageDriver)
+	if dindStorageDriver == "" {
+		dindStorageDriver = defaultDinDStorageDriverForGOOS(runtime.GOOS)
+	}
+	if !isValidDinDStorageDriver(dindStorageDriver) {
+		return runSpec{}, fmt.Errorf(
+			"dind storage driver must be one of: %s, %s",
+			dindStorageDriverOverlay2,
+			dindStorageDriverVFS,
+		)
+	}
+
 	hostDir, err := filepath.Abs(req.CWD)
 	if err != nil {
 		return runSpec{}, fmt.Errorf("resolve cwd: %w", err)
@@ -394,20 +439,53 @@ func buildRunSpec(req RunRequest) (runSpec, error) {
 		}
 	}
 
-	enableDinD := req.EnableDinD
-	if enableDinD {
-		env = append(env, "ENABLE_DIND=1")
+	if dockerMode == dockerModeDinD {
+		env = append(env, "ENABLE_DIND=1", "DIND_STORAGE_DRIVER="+dindStorageDriver)
 	}
 
 	return runSpec{
-		HostDir:     hostDir,
-		Model:       model,
-		CommandArgs: commandArgs,
-		Env:         env,
-		Labels:      labels,
-		CWDHash:     cwdHash,
-		EnableDinD:  enableDinD,
+		HostDir:           hostDir,
+		Model:             model,
+		CommandArgs:       commandArgs,
+		Env:               env,
+		Labels:            labels,
+		CWDHash:           cwdHash,
+		DockerMode:        dockerMode,
+		DinDStorageDriver: dindStorageDriver,
 	}, nil
+}
+
+func normalizeDockerMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func isValidDockerMode(mode string) bool {
+	switch normalizeDockerMode(mode) {
+	case dockerModeNone, dockerModeDinD, dockerModeDooD:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeDinDStorageDriver(driver string) string {
+	return strings.ToLower(strings.TrimSpace(driver))
+}
+
+func isValidDinDStorageDriver(driver string) bool {
+	switch normalizeDinDStorageDriver(driver) {
+	case dindStorageDriverOverlay2, dindStorageDriverVFS:
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultDinDStorageDriverForGOOS(goos string) string {
+	if strings.EqualFold(strings.TrimSpace(goos), "linux") {
+		return dindStorageDriverOverlay2
+	}
+	return dindStorageDriverVFS
 }
 
 func resolveContainerPipelineFilePath(hostDir string, pipelinePath string) (string, error) {

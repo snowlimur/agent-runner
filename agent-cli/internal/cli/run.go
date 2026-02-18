@@ -149,7 +149,8 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		TemplateVars:               cloneTemplateVars(opts.TemplateVars),
 		Model:                      model,
 		Debug:                      opts.Debug,
-		EnableDinD:                 cfg.Docker.EnableDinD,
+		DockerMode:                 cfg.Docker.Mode,
+		DinDStorageDriver:          cfg.Docker.DinDStorageDriver,
 		RunIdleTimeoutSec:          cfg.Docker.RunIdleTimeoutSec,
 		PipelineTaskIdleTimeoutSec: cfg.Docker.PipelineTaskIdleTimeoutSec,
 	}, runner.StreamHooks{

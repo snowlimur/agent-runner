@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,8 @@ func TestLoadValidConfig(t *testing.T) {
 	content := `[docker]
 image = "claude:go"
 model = "sonnet"
-enable_dind = true
+mode = "dind"
+dind_storage_driver = "vfs"
 run_idle_timeout_sec = 123
 pipeline_task_idle_timeout_sec = 45
 
@@ -52,8 +54,11 @@ user_email = "test@example.com"
 	if cfg.Docker.Model != "sonnet" {
 		t.Fatalf("unexpected model: %q", cfg.Docker.Model)
 	}
-	if !cfg.Docker.EnableDinD {
-		t.Fatalf("expected enable_dind=true")
+	if cfg.Docker.Mode != DockerModeDinD {
+		t.Fatalf("unexpected docker mode: %q", cfg.Docker.Mode)
+	}
+	if cfg.Docker.DinDStorageDriver != DinDStorageDriverVFS {
+		t.Fatalf("unexpected dind storage driver: %q", cfg.Docker.DinDStorageDriver)
 	}
 	if cfg.Docker.RunIdleTimeoutSec != 123 {
 		t.Fatalf("unexpected run idle timeout: %d", cfg.Docker.RunIdleTimeoutSec)
@@ -145,8 +150,16 @@ user_email = "test@example.com"
 	if cfg.Docker.Model != DefaultDockerModel {
 		t.Fatalf("expected default model %q, got %q", DefaultDockerModel, cfg.Docker.Model)
 	}
-	if cfg.Docker.EnableDinD {
-		t.Fatalf("expected enable_dind default to false")
+	if cfg.Docker.Mode != DefaultDockerMode {
+		t.Fatalf("expected default docker mode %q, got %q", DefaultDockerMode, cfg.Docker.Mode)
+	}
+	expectedDefaultDriver := DefaultDinDStorageDriverForGOOS(runtime.GOOS)
+	if cfg.Docker.DinDStorageDriver != expectedDefaultDriver {
+		t.Fatalf(
+			"expected default dind storage driver %q, got %q",
+			expectedDefaultDriver,
+			cfg.Docker.DinDStorageDriver,
+		)
 	}
 	if cfg.Docker.RunIdleTimeoutSec != DefaultRunIdleTimeoutSec {
 		t.Fatalf("expected default run idle timeout %d, got %d", DefaultRunIdleTimeoutSec, cfg.Docker.RunIdleTimeoutSec)
@@ -197,7 +210,7 @@ user_email = "test@example.com"
 	}
 }
 
-func TestLoadInvalidEnableDinD(t *testing.T) {
+func TestLoadInvalidDockerMode(t *testing.T) {
 	t.Parallel()
 
 	cwd := t.TempDir()
@@ -208,7 +221,7 @@ func TestLoadInvalidEnableDinD(t *testing.T) {
 
 	content := `[docker]
 image = "claude:go"
-enable_dind = maybe
+mode = "bad-mode"
 
 [auth]
 github_token = "gh-token"
@@ -229,8 +242,96 @@ user_email = "test@example.com"
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "invalid docker.enable_dind") {
+	if !strings.Contains(err.Error(), "docker.mode must be one of") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadInvalidDinDStorageDriver(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	path := filepath.Join(cwd, ".agent-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	content := `[docker]
+image = "claude:go"
+dind_storage_driver = "bad-driver"
+
+[auth]
+github_token = "gh-token"
+claude_token = "claude-token"
+
+[workspace]
+source_workspace_dir = "/workspace-source"
+
+[git]
+user_name = "Test User"
+user_email = "test@example.com"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(cwd)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "docker.dind_storage_driver must be one of") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadUnknownEnableDinDKey(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	path := filepath.Join(cwd, ".agent-cli", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	content := `[docker]
+image = "claude:go"
+enable_dind = true
+
+[auth]
+github_token = "gh-token"
+claude_token = "claude-token"
+
+[workspace]
+source_workspace_dir = "/workspace-source"
+
+[git]
+user_name = "Test User"
+user_email = "test@example.com"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := Load(cwd)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), `unknown key "enable_dind" in section "docker"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDefaultDinDStorageDriverForGOOS(t *testing.T) {
+	t.Parallel()
+
+	if got := DefaultDinDStorageDriverForGOOS("linux"); got != DinDStorageDriverOverlay2 {
+		t.Fatalf("expected overlay2 for linux, got %q", got)
+	}
+	if got := DefaultDinDStorageDriverForGOOS("darwin"); got != DinDStorageDriverVFS {
+		t.Fatalf("expected vfs for darwin, got %q", got)
+	}
+	if got := DefaultDinDStorageDriverForGOOS("windows"); got != DinDStorageDriverVFS {
+		t.Fatalf("expected vfs for windows, got %q", got)
 	}
 }
 

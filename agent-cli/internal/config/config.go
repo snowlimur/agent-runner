@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -13,9 +14,18 @@ const (
 	configDirName  = ".agent-cli"
 	configFileName = "config.toml"
 
-	DockerModelSonnet                 = "sonnet"
-	DockerModelOpus                   = "opus"
-	DefaultDockerModel                = DockerModelOpus
+	DockerModelSonnet  = "sonnet"
+	DockerModelOpus    = "opus"
+	DefaultDockerModel = DockerModelOpus
+
+	DockerModeNone    = "none"
+	DockerModeDinD    = "dind"
+	DockerModeDooD    = "dood"
+	DefaultDockerMode = DockerModeNone
+
+	DinDStorageDriverOverlay2 = "overlay2"
+	DinDStorageDriverVFS      = "vfs"
+
 	DefaultRunIdleTimeoutSec          = 7200
 	DefaultPipelineTaskIdleTimeoutSec = 1800
 )
@@ -31,7 +41,8 @@ type Config struct {
 type DockerConfig struct {
 	Image                      string `toml:"image"`
 	Model                      string `toml:"model"`
-	EnableDinD                 bool   `toml:"enable_dind"`
+	Mode                       string `toml:"mode"`
+	DinDStorageDriver          string `toml:"dind_storage_driver"`
 	RunIdleTimeoutSec          int    `toml:"run_idle_timeout_sec"`
 	PipelineTaskIdleTimeoutSec int    `toml:"pipeline_task_idle_timeout_sec"`
 }
@@ -101,6 +112,32 @@ func (c *Config) Validate() error {
 	if !IsValidDockerModel(c.Docker.Model) {
 		return fmt.Errorf("docker.model must be one of: %s, %s", DockerModelSonnet, DockerModelOpus)
 	}
+
+	c.Docker.Mode = normalizeDockerMode(c.Docker.Mode)
+	if c.Docker.Mode == "" {
+		c.Docker.Mode = DefaultDockerMode
+	}
+	if !IsValidDockerMode(c.Docker.Mode) {
+		return fmt.Errorf(
+			"docker.mode must be one of: %s, %s, %s",
+			DockerModeNone,
+			DockerModeDinD,
+			DockerModeDooD,
+		)
+	}
+
+	c.Docker.DinDStorageDriver = normalizeDinDStorageDriver(c.Docker.DinDStorageDriver)
+	if c.Docker.DinDStorageDriver == "" {
+		c.Docker.DinDStorageDriver = DefaultDinDStorageDriverForGOOS(runtime.GOOS)
+	}
+	if !IsValidDinDStorageDriver(c.Docker.DinDStorageDriver) {
+		return fmt.Errorf(
+			"docker.dind_storage_driver must be one of: %s, %s",
+			DinDStorageDriverOverlay2,
+			DinDStorageDriverVFS,
+		)
+	}
+
 	if c.Docker.RunIdleTimeoutSec <= 0 {
 		c.Docker.RunIdleTimeoutSec = DefaultRunIdleTimeoutSec
 	}
@@ -219,12 +256,12 @@ func setConfigField(cfg *Config, section, key, value string) error {
 			cfg.Docker.Model = value
 			return nil
 		}
-		if key == "enable_dind" {
-			enabled, err := parseBoolValue(value)
-			if err != nil {
-				return fmt.Errorf("invalid docker.enable_dind: %w", err)
-			}
-			cfg.Docker.EnableDinD = enabled
+		if key == "mode" {
+			cfg.Docker.Mode = value
+			return nil
+		}
+		if key == "dind_storage_driver" {
+			cfg.Docker.DinDStorageDriver = value
 			return nil
 		}
 		if key == "run_idle_timeout_sec" {
@@ -276,18 +313,6 @@ func normalizeDockerModel(model string) string {
 	return strings.ToLower(strings.TrimSpace(model))
 }
 
-func parseBoolValue(raw string) (bool, error) {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	switch value {
-	case "true", "1", "yes", "on":
-		return true, nil
-	case "false", "0", "no", "off":
-		return false, nil
-	default:
-		return false, fmt.Errorf("expected true/false, got %q", raw)
-	}
-}
-
 func parsePositiveIntValue(raw string) (int, error) {
 	value := strings.TrimSpace(raw)
 	parsed, err := strconv.Atoi(value)
@@ -307,4 +332,37 @@ func IsValidDockerModel(model string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeDockerMode(mode string) string {
+	return strings.ToLower(strings.TrimSpace(mode))
+}
+
+func IsValidDockerMode(mode string) bool {
+	switch normalizeDockerMode(mode) {
+	case DockerModeNone, DockerModeDinD, DockerModeDooD:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeDinDStorageDriver(driver string) string {
+	return strings.ToLower(strings.TrimSpace(driver))
+}
+
+func IsValidDinDStorageDriver(driver string) bool {
+	switch normalizeDinDStorageDriver(driver) {
+	case DinDStorageDriverOverlay2, DinDStorageDriverVFS:
+		return true
+	default:
+		return false
+	}
+}
+
+func DefaultDinDStorageDriverForGOOS(goos string) string {
+	if strings.EqualFold(strings.TrimSpace(goos), "linux") {
+		return DinDStorageDriverOverlay2
+	}
+	return DinDStorageDriverVFS
 }

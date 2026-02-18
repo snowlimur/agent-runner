@@ -14,7 +14,8 @@ Example:
 [docker]
 image = "claude:go"
 model = "opus"
-enable_dind = false
+mode = "none"
+dind_storage_driver = "overlay2"
 run_idle_timeout_sec = 7200
 pipeline_task_idle_timeout_sec = 1800
 
@@ -31,7 +32,8 @@ user_email = "you@example.com"
 ```
 
 `docker.model` is optional. If omitted, `opus` is used.  
-`docker.enable_dind` is optional. If omitted, `false` is used.
+`docker.mode` is optional. If omitted, `none` is used.
+`docker.dind_storage_driver` is optional. If omitted, default is `overlay2` on Linux and `vfs` on non-Linux hosts.
 `docker.run_idle_timeout_sec` is optional. If omitted, `7200` is used.
 `docker.pipeline_task_idle_timeout_sec` is optional. If omitted, `1800` is used.
 
@@ -134,26 +136,41 @@ stages:
         prompt: "Build and run the project."
 ```
 
-## DinD mode
+## Docker runtime modes
 
-`agent-cli` can enable Docker-in-Docker for runner containers when you need nested `docker`/`docker compose` in agent tasks.
+`agent-cli` supports three Docker runtime modes for runner containers:
+- `none` (default): no nested Docker runtime
+- `dind`: Docker-in-Docker (`dockerd` inside runner container)
+- `dood`: Docker-outside-of-Docker (uses host Docker socket)
 
-Enable it in `./.agent-cli/config.toml`:
+The mode and DinD driver are configured in `./.agent-cli/config.toml`:
 
 ```toml
 [docker]
 image = "claude:go"
-enable_dind = true
+mode = "dind"                   # none | dind | dood
+dind_storage_driver = "overlay2" # overlay2 | vfs (used only in dind mode; if omitted: Linux=overlay2, others=vfs)
 ```
 
-What this does:
-- sets `ENABLE_DIND=1` inside the runner container
-- starts runner container in `--privileged` mode
-- runner entrypoint starts internal `dockerd` and exposes `DOCKER_HOST=unix:///var/run/docker.sock`
+Why this was added:
+- `dood` avoids booting an internal `dockerd`, so startup is faster when host Docker is available.
+- `dind_storage_driver` allows forcing `vfs` in environments where `overlay2` is unsupported.
+
+Mode behavior:
+- `mode = "none"`: default host network, not privileged, no docker socket mount.
+- `mode = "dind"`:
+  - sets `ENABLE_DIND=1` and `DIND_STORAGE_DRIVER=<value>`
+  - uses `--privileged`
+  - switches container network to `bridge`
+  - entrypoint tries `overlay2` first and can quickly fall back to `vfs`
+- `mode = "dood"`:
+  - mounts `/var/run/docker.sock:/var/run/docker.sock`
+  - does not start internal `dockerd`
+  - stays non-privileged and uses host network mode
 
 Notes:
-- this is rootful DinD and requires privileged containers on the host
-- privileged mode is security-sensitive; use only in trusted environments
+- `mode = "dind"` is rootful and requires privileged containers; use only in trusted environments.
+- `mode = "dood"` exposes host Docker daemon access to the runner container.
 
 ## Stats storage
 

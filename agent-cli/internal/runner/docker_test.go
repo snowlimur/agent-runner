@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -243,6 +244,52 @@ func TestBuildDockerArgsRejectsInvalidModel(t *testing.T) {
 	}
 }
 
+func TestBuildDockerArgsRejectsInvalidDockerMode(t *testing.T) {
+	_, err := BuildDockerArgs(RunRequest{
+		Image:              "claude:go",
+		CWD:                "/tmp/work",
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		DockerMode:         "bad-mode",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "docker mode must be one of") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildDockerArgsRejectsInvalidDinDStorageDriver(t *testing.T) {
+	_, err := BuildDockerArgs(RunRequest{
+		Image:              "claude:go",
+		CWD:                "/tmp/work",
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		DinDStorageDriver:  "bad-driver",
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "dind storage driver must be one of") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDefaultDinDStorageDriverForGOOS(t *testing.T) {
+	t.Parallel()
+
+	if got := defaultDinDStorageDriverForGOOS("linux"); got != dindStorageDriverOverlay2 {
+		t.Fatalf("expected overlay2 for linux, got %q", got)
+	}
+	if got := defaultDinDStorageDriverForGOOS("darwin"); got != dindStorageDriverVFS {
+		t.Fatalf("expected vfs for darwin, got %q", got)
+	}
+	if got := defaultDinDStorageDriverForGOOS("windows"); got != dindStorageDriverVFS {
+		t.Fatalf("expected vfs for windows, got %q", got)
+	}
+}
+
 func TestBuildDockerArgsPipeline(t *testing.T) {
 	cwd := t.TempDir()
 	planPath := filepath.Join(cwd, ".agent-cli", "plans", "pipeline.yaml")
@@ -416,7 +463,7 @@ func TestRunDockerStreamingSuccessUsesSDKAndStreams(t *testing.T) {
 		t.Fatal("expected AutoRemove=true")
 	}
 	if fake.createdHost.Privileged {
-		t.Fatal("expected Privileged=false when ENABLE_DIND is disabled")
+		t.Fatal("expected Privileged=false when docker mode is not dind")
 	}
 	if len(fake.createdHost.Binds) != 1 {
 		t.Fatalf("unexpected bind count: %d", len(fake.createdHost.Binds))
@@ -444,6 +491,9 @@ func TestRunDockerStreamingSuccessUsesSDKAndStreams(t *testing.T) {
 	}
 	if containsString(fake.createdConfig.Env, "ENABLE_DIND=1") {
 		t.Fatalf("did not expect ENABLE_DIND in env when disabled: %#v", fake.createdConfig.Env)
+	}
+	if containsString(fake.createdConfig.Env, "DIND_STORAGE_DRIVER=") {
+		t.Fatalf("did not expect DIND_STORAGE_DRIVER env when mode is none: %#v", fake.createdConfig.Env)
 	}
 
 	labels := fake.listOptions.Filters.Get("label")
@@ -574,7 +624,7 @@ func TestRunDockerStreamingInterruptedDuringImagePullDrain(t *testing.T) {
 	}
 }
 
-func TestRunDockerStreamingEnableDinDSetsPrivilegedAndEnv(t *testing.T) {
+func TestRunDockerStreamingDinDModeSetsPrivilegedAndEnv(t *testing.T) {
 	fake := &fakeDockerAPI{
 		createResp: container.CreateResponse{ID: "dind-run"},
 		logsReader: muxedLogStream(
@@ -590,7 +640,8 @@ func TestRunDockerStreamingEnableDinDSetsPrivilegedAndEnv(t *testing.T) {
 		CWD:                t.TempDir(),
 		SourceWorkspaceDir: "/workspace-source",
 		Prompt:             "build project",
-		EnableDinD:         true,
+		DockerMode:         dockerModeDinD,
+		DinDStorageDriver:  dindStorageDriverVFS,
 	}, StreamHooks{})
 	if runErr != nil {
 		t.Fatalf("run docker: %v", runErr)
@@ -612,6 +663,90 @@ func TestRunDockerStreamingEnableDinDSetsPrivilegedAndEnv(t *testing.T) {
 	}
 	if !containsString(fake.createdConfig.Env, "ENABLE_DIND=1") {
 		t.Fatalf("expected ENABLE_DIND env, got %#v", fake.createdConfig.Env)
+	}
+	if !containsString(fake.createdConfig.Env, "DIND_STORAGE_DRIVER=vfs") {
+		t.Fatalf("expected DIND_STORAGE_DRIVER env, got %#v", fake.createdConfig.Env)
+	}
+}
+
+func TestRunDockerStreamingDinDModeUsesOSDefaultStorageDriverWhenUnset(t *testing.T) {
+	fake := &fakeDockerAPI{
+		createResp: container.CreateResponse{ID: "dind-run-default-driver"},
+		logsReader: muxedLogStream(
+			[]string{"ok"},
+			nil,
+		),
+		waitResp: container.WaitResponse{StatusCode: 0},
+	}
+	withFakeDockerAPI(t, fake)
+
+	out, runErr := RunDockerStreaming(context.Background(), RunRequest{
+		Image:              "claude:go",
+		CWD:                t.TempDir(),
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		DockerMode:         dockerModeDinD,
+	}, StreamHooks{})
+	if runErr != nil {
+		t.Fatalf("run docker: %v", runErr)
+	}
+	if out.ExitCode != 0 {
+		t.Fatalf("unexpected exit code: %d", out.ExitCode)
+	}
+	if fake.createdConfig == nil {
+		t.Fatal("container config was not captured")
+	}
+
+	expectedDriver := defaultDinDStorageDriverForGOOS(runtime.GOOS)
+	if !containsString(fake.createdConfig.Env, "DIND_STORAGE_DRIVER="+expectedDriver) {
+		t.Fatalf("expected DIND_STORAGE_DRIVER=%s env, got %#v", expectedDriver, fake.createdConfig.Env)
+	}
+}
+
+func TestRunDockerStreamingDooDModeBindsHostSocket(t *testing.T) {
+	fake := &fakeDockerAPI{
+		createResp: container.CreateResponse{ID: "dood-run"},
+		logsReader: muxedLogStream(
+			[]string{"ok"},
+			nil,
+		),
+		waitResp: container.WaitResponse{StatusCode: 0},
+	}
+	withFakeDockerAPI(t, fake)
+
+	out, runErr := RunDockerStreaming(context.Background(), RunRequest{
+		Image:              "claude:go",
+		CWD:                t.TempDir(),
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		DockerMode:         dockerModeDooD,
+	}, StreamHooks{})
+	if runErr != nil {
+		t.Fatalf("run docker: %v", runErr)
+	}
+	if out.ExitCode != 0 {
+		t.Fatalf("unexpected exit code: %d", out.ExitCode)
+	}
+	if fake.createdHost == nil {
+		t.Fatal("container host config was not captured")
+	}
+	if fake.createdHost.Privileged {
+		t.Fatal("expected Privileged=false for DooD mode")
+	}
+	if fake.createdHost.NetworkMode != container.NetworkMode("host") {
+		t.Fatalf("expected host network mode for DooD, got %s", fake.createdHost.NetworkMode)
+	}
+	if !containsString(fake.createdHost.Binds, hostDockerSocketPath+":"+hostDockerSocketPath) {
+		t.Fatalf("expected host docker socket bind, got %#v", fake.createdHost.Binds)
+	}
+	if fake.createdConfig == nil {
+		t.Fatal("container config was not captured")
+	}
+	if containsString(fake.createdConfig.Env, "ENABLE_DIND=1") {
+		t.Fatalf("did not expect ENABLE_DIND env for DooD, got %#v", fake.createdConfig.Env)
+	}
+	if containsString(fake.createdConfig.Env, "DIND_STORAGE_DRIVER=") {
+		t.Fatalf("did not expect DIND_STORAGE_DRIVER env for DooD, got %#v", fake.createdConfig.Env)
 	}
 }
 

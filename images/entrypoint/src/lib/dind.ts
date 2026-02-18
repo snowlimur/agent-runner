@@ -20,6 +20,9 @@ import {
   sleepMs,
 } from "./utils.js";
 
+const OVERLAY2_FAST_FALLBACK_GRACE_MS = 5_000;
+const OVERLAY2_FATAL_PATTERNS = ["failed to mount overlay", "driver not supported: overlay2"];
+
 function appendLogTail(current: string, chunk: string): string {
   const next = `${current}${chunk}`;
   if (next.length <= DIND_LOG_TAIL_LIMIT) {
@@ -107,8 +110,20 @@ function launchDockerd(debugEnabled: boolean, storageDriver: string): DinDRuntim
   };
 }
 
-function waitForDockerReady(runtime: DinDRuntime, timeoutSeconds: number): boolean {
+function hasOverlay2FatalError(logTail: string): boolean {
+  const normalized = logTail.toLowerCase();
+  return OVERLAY2_FATAL_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+function waitForDockerReady(
+  runtime: DinDRuntime,
+  timeoutSeconds: number,
+  useFastOverlayFallback: boolean,
+): boolean {
   const deadline = Date.now() + timeoutSeconds * 1000;
+  const fastFallbackDeadline = useFastOverlayFallback
+    ? Date.now() + OVERLAY2_FAST_FALLBACK_GRACE_MS
+    : Number.POSITIVE_INFINITY;
 
   while (Date.now() < deadline) {
     if (runtime.child.exitCode !== null) {
@@ -117,7 +132,17 @@ function waitForDockerReady(runtime: DinDRuntime, timeoutSeconds: number): boole
     if (canTalkToDocker()) {
       return true;
     }
-    sleepMs(1000);
+
+    if (useFastOverlayFallback) {
+      if (hasOverlay2FatalError(runtime.getLogTail())) {
+        return false;
+      }
+      if (Date.now() >= fastFallbackDeadline) {
+        return false;
+      }
+    }
+
+    sleepMs(250);
   }
 
   return false;
@@ -195,8 +220,9 @@ export function startDinD(debugEnabled: boolean): DinDRuntime | null {
   for (const driver of drivers) {
     debugLog(debugEnabled, `Starting dockerd with storage driver: ${driver}`);
     const runtime = launchDockerd(debugEnabled, driver);
+    const useFastOverlayFallback = driver === "overlay2" && drivers.includes("vfs");
 
-    if (waitForDockerReady(runtime, timeoutSeconds)) {
+    if (waitForDockerReady(runtime, timeoutSeconds, useFastOverlayFallback)) {
       debugLog(debugEnabled, `DinD is ready (driver=${driver}).`);
       return runtime;
     }

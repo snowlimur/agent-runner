@@ -893,9 +893,9 @@ func TestRunCommandPassesDebugFlagToRunner(t *testing.T) {
 	}
 }
 
-func TestRunCommandUsesConfigEnableDinD(t *testing.T) {
+func TestRunCommandUsesConfigDockerModeAndDriver(t *testing.T) {
 	cwd := t.TempDir()
-	writeTestConfigWithModelAndDinD(t, cwd, "", true)
+	writeTestConfigWithDockerRuntime(t, cwd, "", config.DockerModeDinD, config.DinDStorageDriverVFS)
 
 	resultLine := `{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":2,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`
 	lines := []string{resultLine}
@@ -922,8 +922,15 @@ func TestRunCommandUsesConfigEnableDinD(t *testing.T) {
 	if err := RunCommand(context.Background(), cwd, []string{"build"}); err != nil {
 		t.Fatalf("run command: %v", err)
 	}
-	if !capturedReq.EnableDinD {
-		t.Fatal("expected EnableDinD to be true from config")
+	if capturedReq.DockerMode != config.DockerModeDinD {
+		t.Fatalf("expected docker mode %q, got %q", config.DockerModeDinD, capturedReq.DockerMode)
+	}
+	if capturedReq.DinDStorageDriver != config.DinDStorageDriverVFS {
+		t.Fatalf(
+			"expected dind storage driver %q, got %q",
+			config.DinDStorageDriverVFS,
+			capturedReq.DinDStorageDriver,
+		)
 	}
 	if capturedReq.RunIdleTimeoutSec != config.DefaultRunIdleTimeoutSec {
 		t.Fatalf("unexpected run idle timeout sec: %d", capturedReq.RunIdleTimeoutSec)
@@ -984,10 +991,10 @@ func writeTestConfig(t *testing.T, cwd string) {
 }
 
 func writeTestConfigWithModel(t *testing.T, cwd, model string) {
-	writeTestConfigWithModelAndDinD(t, cwd, model, false)
+	writeTestConfigWithDockerRuntime(t, cwd, model, "", "")
 }
 
-func writeTestConfigWithModelAndDinD(t *testing.T, cwd, model string, enableDinD bool) {
+func writeTestConfigWithDockerRuntime(t *testing.T, cwd, model, mode, dindStorageDriver string) {
 	t.Helper()
 
 	configPath := config.ConfigPath(cwd)
@@ -999,13 +1006,17 @@ func writeTestConfigWithModelAndDinD(t *testing.T, cwd, model string, enableDinD
 	if strings.TrimSpace(model) != "" {
 		modelLine = "\nmodel = \"" + model + "\""
 	}
-	enableDinDLine := ""
-	if enableDinD {
-		enableDinDLine = "\nenable_dind = true"
+	modeLine := ""
+	if strings.TrimSpace(mode) != "" {
+		modeLine = "\nmode = \"" + mode + "\""
+	}
+	dindStorageDriverLine := ""
+	if strings.TrimSpace(dindStorageDriver) != "" {
+		dindStorageDriverLine = "\ndind_storage_driver = \"" + dindStorageDriver + "\""
 	}
 
 	content := `[docker]
-image = "claude:go"` + modelLine + enableDinDLine + `
+image = "claude:go"` + modelLine + modeLine + dindStorageDriverLine + `
 
 [auth]
 github_token = "gh-token"

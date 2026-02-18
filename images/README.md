@@ -5,7 +5,7 @@ The `images` directory contains runner Docker images and a Node.js entrypoint th
 1. Prepares a writable repository copy.
 2. Checks GitHub authentication and configures git.
 3. Runs Claude in interactive, prompt, or pipeline mode.
-4. Optionally starts DinD (`dockerd` inside the container).
+4. Optionally starts DinD (`dockerd` inside the container) or uses host Docker socket (DooD).
 
 ## Structure
 
@@ -116,7 +116,7 @@ The runtime entrypoint in the image is compiled JavaScript:
    - `user.name` from `GIT_USER_NAME` / `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` (fallback: `Claude Code Agent`);
    - `user.email` from `GIT_USER_EMAIL` / `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` (fallback: `claude-bot@local.docker`);
    - `safe.directory=/workspace`.
-5. Starts `dockerd` if `ENABLE_DIND` is truthy.
+5. Starts `dockerd` if `ENABLE_DIND` is truthy; otherwise it can use a mounted host Docker socket.
 6. Runs one mode:
    - pipeline (`--pipeline <path>`);
    - single prompt (when task args are present);
@@ -256,7 +256,8 @@ Behavior:
 
 - `dockerd` starts via `sudo -n`.
 - First attempt uses `DIND_STORAGE_DRIVER` (default `overlay2`).
-- If `overlay2` fails readiness checks, it retries with `vfs`.
+- If `overlay2` reports fatal mount/driver errors, it retries with `vfs` immediately.
+- If `overlay2` does not become ready quickly, it retries with `vfs` after a short 5s grace period.
 - Readiness timeout comes from `DIND_STARTUP_TIMEOUT_SEC` (default `45` seconds).
 - On `SIGINT`/`SIGTERM`, daemon shutdown is handled gracefully.
 
@@ -265,9 +266,33 @@ Run example:
 ```bash
 docker run --rm --privileged \
   -e ENABLE_DIND=1 \
+  -e DIND_STORAGE_DRIVER=overlay2 \
   -e SOURCE_WORKSPACE_DIR=/workspace-source \
   -e GH_TOKEN=*** \
   -e CLAUDE_CODE_OAUTH_TOKEN=*** \
+  -v "$(pwd)":/workspace-source:ro \
+  claude:go --model opus -v "run integration tests"
+```
+
+## DooD (Host Docker Socket)
+
+Use this mode when you want nested Docker commands without starting internal `dockerd`.
+
+Behavior:
+
+- does not set `ENABLE_DIND`
+- does not require `--privileged`
+- reuses host daemon via `/var/run/docker.sock`
+- avoids DinD startup latency and fallback logic
+
+Run example:
+
+```bash
+docker run --rm \
+  -e SOURCE_WORKSPACE_DIR=/workspace-source \
+  -e GH_TOKEN=*** \
+  -e CLAUDE_CODE_OAUTH_TOKEN=*** \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$(pwd)":/workspace-source:ro \
   claude:go --model opus -v "run integration tests"
 ```
