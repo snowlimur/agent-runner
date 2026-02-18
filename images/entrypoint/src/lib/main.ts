@@ -3,7 +3,7 @@ import process from "node:process";
 import { resolveEntrypointArgs, resolvePromptRunOptions } from "./cli.js";
 import { installDinDSignalHandlers, startDinD, stopDinD } from "./dind.js";
 import { executePipelinePlan, runClaudeProcess } from "./pipeline-executor.js";
-import { resolvePipelinePlan } from "./pipeline-plan.js";
+import { PipelinePlanError, resolvePipelinePlan } from "./pipeline-plan.js";
 import type { ClaudeProcessResult, DinDRuntime, Model } from "./types.js";
 import { debugLog, isTruthyEnv } from "./utils.js";
 import {
@@ -21,7 +21,7 @@ async function runSinglePrompt(
   const { prompt, claudeArgs } = resolvePromptRunOptions(taskArgs);
   debugLog(debugEnabled, `Running provided task with model ${model}: ${prompt}`);
 
-  const result = await runClaudeProcess([
+  return runClaudeProcess([
     "--dangerously-skip-permissions",
     "--model",
     model,
@@ -29,8 +29,6 @@ async function runSinglePrompt(
     "-p",
     prompt,
   ]);
-
-  return result;
 }
 
 async function runInteractive(debugEnabled: boolean): Promise<ClaudeProcessResult> {
@@ -68,7 +66,18 @@ export async function runEntrypoint(): Promise<void> {
   }
 
   try {
-    const plan = resolvePipelinePlan(args, model);
+    let plan = null;
+    try {
+      plan = resolvePipelinePlan(args, model);
+    } catch (error: unknown) {
+      if (error instanceof PipelinePlanError) {
+        process.stderr.write(`Entrypoint failed: ${error.message}\n`);
+        process.exitCode = error.exitCode;
+        return;
+      }
+      throw error;
+    }
+
     if (plan !== null) {
       if (taskArgs.length > 0) {
         throw new Error("Prompt task arguments cannot be used together with pipeline mode.");

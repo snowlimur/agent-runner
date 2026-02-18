@@ -16,17 +16,16 @@ func TestProgressTUIModelPipelineHierarchyAndTaskResult(t *testing.T) {
 	model := newProgressTUIModel(true, nil)
 
 	lines := []string{
-		`{"type":"pipeline_event","event":"plan_start","stage_count":1}`,
-		`{"type":"pipeline_event","event":"stage_start","stage_id":"main","mode":"sequential","task_count":2}`,
-		`{"type":"pipeline_event","event":"task_start","stage_id":"main","task_id":"task_1","model":"opus","verbosity":"vv","workspace":"shared"}`,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"main","task_id":"task_1","session_id":"s1"}`,
+		`{"type":"pipeline_event","event":"plan_start","node_count":1}`,
+		`{"type":"pipeline_event","event":"node_start","node_id":"main","node_run_id":"task_1","kind":"agent","model":"opus","cwd":"/workspace"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"main","node_run_id":"task_1","session_id":"s1"}`,
 		`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"tool-a","name":"Bash","input":{"command":"go test ./..."}}]}}`,
-		`{"type":"pipeline_event","event":"task_start","stage_id":"main","task_id":"task_2","model":"sonnet","verbosity":"v","workspace":"shared"}`,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"main","task_id":"task_2","session_id":"s2"}`,
+		`{"type":"pipeline_event","event":"node_start","node_id":"main","node_run_id":"task_2","kind":"agent","model":"sonnet","cwd":"/workspace"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"main","node_run_id":"task_2","session_id":"s2"}`,
 		`{"type":"assistant","session_id":"s2","message":{"id":"m2","content":[{"type":"tool_use","id":"tool-b","name":"Bash","input":{"command":"rg TODO -n"}}]}}`,
 		`{"type":"user","session_id":"s2","message":{"content":[{"tool_use_id":"tool-b","type":"tool_result","content":"done","is_error":false}]},"tool_use_result":{"stdout":"done","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}`,
 		`{"type":"result","subtype":"success","is_error":false,"duration_ms":5,"duration_api_ms":5,"num_turns":1,"result":"Task 2 completed\nAll checks passed","stop_reason":null,"session_id":"s2","total_cost_usd":0.1,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u2"}`,
-		`{"type":"pipeline_event","event":"task_finish","stage_id":"main","task_id":"task_2","status":"success","duration_ms":1000}`,
+		`{"type":"pipeline_event","event":"node_finish","node_id":"main","node_run_id":"task_2","status":"success","duration_ms":1000}`,
 	}
 
 	for _, line := range lines {
@@ -52,17 +51,17 @@ func TestProgressTUIModelShowsAllActiveStepsWithoutExpandToggle(t *testing.T) {
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"stage_start","stage_id":"main","mode":"sequential","task_count":1}`,
+		`{"type":"pipeline_event","event":"plan_start","node_count":1}`,
 	)
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"task_start","stage_id":"main","task_id":"task_1"}`,
+		`{"type":"pipeline_event","event":"node_start","node_id":"main","node_run_id":"task_1","kind":"agent"}`,
 	)
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"main","task_id":"task_1","session_id":"s1"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"main","node_run_id":"task_1","session_id":"s1"}`,
 	)
 	model = applyStreamLine(
 		t,
@@ -147,12 +146,12 @@ func TestProgressTUIModelOutOfOrderResultBind(t *testing.T) {
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"task_start","stage_id":"main","task_id":"task_1"}`,
+		`{"type":"pipeline_event","event":"node_start","node_id":"main","node_run_id":"task_1","kind":"agent"}`,
 	)
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"main","task_id":"task_1","session_id":"s1"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"main","node_run_id":"task_1","session_id":"s1"}`,
 	)
 
 	task := model.lookupTask("main", "task_1")
@@ -181,12 +180,12 @@ func TestProgressTUIModelPipelineStatsTableIncludesUsageColumns(t *testing.T) {
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"task_start","stage_id":"dev","task_id":"task_a"}`,
+		`{"type":"pipeline_event","event":"node_start","node_id":"dev","node_run_id":"task_a","kind":"agent"}`,
 	)
 	model = applyStreamLine(
 		t,
 		model,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_a","session_id":"s1"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_a","session_id":"s1"}`,
 	)
 	model = applyStreamLine(
 		t,
@@ -194,21 +193,21 @@ func TestProgressTUIModelPipelineStatsTableIncludesUsageColumns(t *testing.T) {
 		`{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"tool-a","name":"Bash","input":{"command":"go test"}}]}}`,
 	)
 
-	normalized := stats.PipelineTaskNormalized{
+	normalized := stats.PipelineNodeRunNormalized{
 		InputTokens:              10,
 		CacheCreationInputTokens: 1,
 		CacheReadInputTokens:     2,
 		OutputTokens:             3,
 		CostUSD:                  0.125,
-		ByModel:                  map[string]stats.PipelineTaskModelMetric{},
+		ByModel:                  map[string]stats.PipelineNodeRunModelMetric{},
 	}
 	model.finalRecord = &stats.RunRecord{
 		Status: stats.RunStatusSuccess,
 		Pipeline: &stats.PipelineRunRecord{
-			Tasks: []stats.PipelineTaskRecord{
+			NodeRuns: []stats.PipelineNodeRunRecord{
 				{
-					StageID:    "dev",
-					TaskID:     "task_a",
+					NodeID:     "dev",
+					NodeRunID:  "task_a",
 					Status:     "success",
 					DurationMS: 1500,
 					Normalized: &normalized,

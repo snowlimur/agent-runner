@@ -162,86 +162,126 @@ entrypoint --pipeline .agent/pipeline.yml --model opus
 
 Important: task args cannot be combined with `--pipeline`.
 
-## YAML Pipeline Format (v1)
+## YAML Pipeline Format (v2)
 
 Plan validation is implemented in `pipeline-plan.ts`.
 
 Supported values:
 
-- `version`: only `v1`
-- `model`: `sonnet` | `opus`
-- `verbosity`: `text` | `v` | `vv` (aliases: `json` -> `v`, `stream-json`/`stream_json` -> `vv`)
-- `on_error`: `fail_fast` | `continue`
-- `workspace`: `shared` | `worktree` | `snapshot_ro`
-- stage `mode`: `sequential` | `parallel`
+- `version`: only `v2`
+- `defaults.model`: `sonnet` | `opus`
+- `defaults.agent_idle_timeout_sec`: positive integer
+- `defaults.command_timeout_sec`: positive integer
+- `limits.max_iterations`: positive integer
+- `limits.max_same_node_hits`: positive integer
+- `nodes.<id>.run.kind`: `agent` | `command`
+- terminal status: `success` | `blocked` | `failed` | `canceled`
 
 Constraints:
 
-- `stages` must be a non-empty array.
-- `stage.id` and `task.id` must be unique in their scope.
-- Each task must define exactly one prompt source: `prompt` or `prompt_file`.
-- `prompt_file` must be a relative path inside `/workspace` (path traversal is blocked).
-- For `mode: parallel` + `workspace: shared`, one of these is required:
-  - `read_only: true`
-  - `allow_shared_writes: true`
-
-Note: `read_only` is a validation guard for shared parallel mode. Actual read-only filesystem permissions are applied only for `workspace: snapshot_ro`.
+- `entry` must reference an existing node id.
+- `nodes` must be a non-empty mapping.
+- Executable node:
+  - requires `run` and non-empty `transitions`.
+- Terminal node (`terminal: true`):
+  - requires `terminal_status` and `exit_code`.
+  - forbids `run` and `transitions`.
+- Agent run:
+  - requires exactly one of `prompt` or `prompt_file`.
+  - requires `decision.schema_file`.
+- Command run:
+  - requires `cmd`.
+- All paths (`prompt_file`, `decision.schema_file`, command `cwd`) must stay within `/workspace`.
 
 ### Pipeline Example
 
 ```yaml
-version: v1
+version: v2
+entry: planner
 defaults:
   model: opus
-  verbosity: vv
-  on_error: fail_fast
-  workspace: shared
+  agent_idle_timeout_sec: 1800
+  command_timeout_sec: 600
+limits:
+  max_iterations: 100
+  max_same_node_hits: 25
 
-stages:
-  - id: analyze
-    mode: sequential
-    tasks:
-      - id: inspect
-        prompt: "Analyze recent changes and list risks."
+nodes:
+  planner:
+    run:
+      kind: agent
+      prompt_file: prompts/planner.md
+      decision:
+        schema_file: schemas/planner.schema.json
+    transitions:
+      - when: 'decision.decision == "todo_ready"'
+        to: implementer
+      - when: 'decision.decision == "blocked"'
+        to: blocked_stop
 
-  - id: implement
-    mode: parallel
-    max_parallel: 2
-    tasks:
-      - id: code
-        prompt_file: prompts/implement.md
-        workspace: worktree
-      - id: tests
-        prompt: "Run tests and summarize failing cases."
-        workspace: shared
-        read_only: true
+  implementer:
+    run:
+      kind: command
+      cmd: "task implement TOP=1"
+      cwd: "."
+    transitions:
+      - when: "run.exit_code == 0"
+        to: reviewer
+      - when: "run.exit_code != 0"
+        to: blocked_stop
+
+  reviewer:
+    run:
+      kind: agent
+      prompt: "Review changes and return decision JSON."
+      decision:
+        schema_file: schemas/reviewer.schema.json
+    transitions:
+      - when: 'decision.decision == "approved"'
+        to: done
+      - when: 'decision.decision == "needs_fixes"'
+        to: implementer
+
+  blocked_stop:
+    terminal: true
+    terminal_status: blocked
+    exit_code: 20
+    message: "Pipeline blocked by validation errors."
+
+  done:
+    terminal: true
+    terminal_status: success
+    exit_code: 0
 ```
 
 ## Pipeline Execution and Events
 
 `pipeline-executor.ts` behavior:
 
-- For `workspace: shared`, tasks run directly in `/workspace`.
-- For `workspace: worktree` and `workspace: snapshot_ro`, a workspace copy is created at:
-  - `/tmp/agent-pipeline-workspaces/<planRunId>/<stageId>/<taskId>`
-- For `snapshot_ro`, permissions are applied recursively:
-  - directories: `0555`
-  - files: `0444`
+- Executes a state machine from `entry` until a terminal node is reached.
+- Evaluates transitions top-to-bottom and takes the first matching `when`.
+- Stops with system errors if no transition matches or limits are exceeded.
+- For `kind: agent`, Claude is always started with:
+  - `--verbose --output-format stream-json`
+- Entrypoint parses stream-json for decisions and forwards each stdout line unchanged.
 
 During execution, JSON events are printed:
 
 - `pipeline_event.plan_start`
-- `pipeline_event.stage_start`
-- `pipeline_event.task_start`
-- `pipeline_event.task_session_bind` (when `system/init` with `session_id` is observed in stream-json output)
-- `pipeline_event.task_finish`
-- `pipeline_event.stage_finish`
+- `pipeline_event.node_start`
+- `pipeline_event.node_session_bind` (when `system/init` with `session_id` is observed)
+- `pipeline_event.node_timeout`
+- `pipeline_event.node_finish`
+- `pipeline_event.transition_taken`
 - `pipeline_event.plan_finish`
 
-At the end, an aggregated `pipeline_result` is printed and process exit code is:
+At the end, an aggregated `pipeline_result` is printed. Exit code is:
 
-- `0` if all tasks succeed;
-- `1` if at least one task fails.
+- terminal node `exit_code`, if a terminal node was reached;
+- `2` invalid plan;
+- `3` no transition matched;
+- `4` iteration limits exceeded;
+- `5` node execution error without matching transition.
 
 ## DinD (Optional)
 

@@ -3,12 +3,18 @@ import type { Readable } from "node:stream";
 
 export type Model = "sonnet" | "opus";
 export type Verbosity = "text" | "v" | "vv";
-export type OnErrorPolicy = "fail_fast" | "continue";
-export type WorkspaceMode = "shared" | "worktree" | "snapshot_ro";
-export type StageMode = "sequential" | "parallel";
-export type TaskStatus = "success" | "error";
-export type PromptSource = "prompt" | "prompt_file";
-export type PipelineVersion = "v1";
+export type PipelineVersion = "v2";
+
+export type PipelineNodeKind = "agent" | "command";
+export type PipelineNodeRunStatus = "success" | "error";
+export type PipelineTerminalStatus = "success" | "blocked" | "failed" | "canceled";
+
+export type JSONPrimitive = string | number | boolean | null;
+export type JSONValue = JSONPrimitive | JSONArray | JSONObject;
+export interface JSONObject {
+  [key: string]: JSONValue;
+}
+export type JSONArray = JSONValue[];
 
 export interface EntrypointArgs {
   debugEnabled: boolean;
@@ -32,44 +38,76 @@ export interface PromptFileRef {
 
 export interface PipelineDefaults {
   model: Model;
-  verbosity: Verbosity;
-  onError: OnErrorPolicy;
-  workspace: WorkspaceMode;
-  taskIdleTimeoutSec: number;
+  agentIdleTimeoutSec: number;
+  commandTimeoutSec: number;
 }
 
-export interface PipelineTask {
-  id: string;
+export interface PipelineLimits {
+  maxIterations: number;
+  maxSameNodeHits: number;
+}
+
+export interface PipelineTransition {
+  when: string;
+  to: string;
+}
+
+export interface PipelineDecisionRule {
+  schemaFile: PromptFileRef;
+  schema: JSONObject;
+}
+
+export interface PipelineAgentRun {
+  kind: "agent";
+  model: Model;
   promptFile: PromptFileRef | null;
-  onError: OnErrorPolicy;
-  workspace: WorkspaceMode;
-  model: Model;
-  verbosity: Verbosity;
-  readOnly: boolean;
-  allowSharedWrites: boolean;
   promptText: string;
-  taskIdleTimeoutSec: number;
+  idleTimeoutSec: number;
+  decision: PipelineDecisionRule;
 }
 
-export interface PipelineStage {
-  id: string;
-  mode: StageMode;
-  maxParallel: number;
-  onError: OnErrorPolicy;
-  workspace: WorkspaceMode;
-  model: Model;
-  verbosity: Verbosity;
-  taskIdleTimeoutSec: number;
-  tasks: PipelineTask[];
+export interface PipelineCommandRun {
+  kind: "command";
+  cmd: string;
+  cwd: string;
+  timeoutSec: number;
 }
+
+export type PipelineNodeRun = PipelineAgentRun | PipelineCommandRun;
+
+export interface PipelineTerminalNode {
+  id: string;
+  terminal: true;
+  terminalStatus: PipelineTerminalStatus;
+  exitCode: number;
+  message: string;
+}
+
+export interface PipelineExecutableNode {
+  id: string;
+  run: PipelineNodeRun;
+  transitions: PipelineTransition[];
+}
+
+export type PipelineNode = PipelineTerminalNode | PipelineExecutableNode;
 
 export interface PipelinePlan {
   version: PipelineVersion;
+  entryNode: string;
   defaults: PipelineDefaults;
-  stages: PipelineStage[];
+  limits: PipelineLimits;
+  nodeOrder: string[];
+  nodes: Record<string, PipelineNode>;
 }
 
 export interface ClaudeProcessResult {
+  code: number;
+  signal: NodeJS.Signals | "";
+  timedOut: boolean;
+  timeoutMessage: string;
+}
+
+export interface CommandProcessResult {
   code: number;
   signal: NodeJS.Signals | "";
   timedOut: boolean;
@@ -87,102 +125,130 @@ export interface RunClaudeProcessOptions extends Omit<SpawnOptions, "stdio"> {
   onIdleTimeout?: (timeoutMs: number) => void;
 }
 
+export interface RunCommandProcessOptions extends Omit<SpawnOptions, "stdio"> {
+  timeoutMs?: number;
+  onTimeout?: (timeoutMs: number) => void;
+}
+
 export interface DinDRuntime {
   child: ChildProcessByStdio<null, Readable, Readable>;
   storageDriver: string;
   getLogTail: () => string;
 }
 
-export interface PipelineTaskResult {
-  stage_id: string;
-  task_id: string;
-  status: TaskStatus;
-  on_error: OnErrorPolicy;
-  workspace: WorkspaceMode;
-  model: Model;
-  verbosity: Verbosity;
-  prompt_source: PromptSource;
+export interface PipelineNodeRunRecord {
+  node_id: string;
+  node_run_id: string;
+  kind: PipelineNodeKind;
+  status: PipelineNodeRunStatus;
+  model: Model | "";
+  prompt_source: "prompt" | "prompt_file" | "";
   prompt_file: string;
+  cmd: string;
+  cwd: string;
   exit_code: number;
   signal: NodeJS.Signals | "";
+  timed_out: boolean;
   started_at: string;
   finished_at: string;
   duration_ms: number;
   error_message: string;
 }
 
-export interface PipelineStageResult {
-  stage_id: string;
-  mode: StageMode;
-  status: TaskStatus;
-  task_count: number;
-  completed_tasks: number;
-  failed_tasks: number;
-  duration_ms: number;
-}
-
 export interface PipelineResult {
   type: "pipeline_result";
   version: PipelineVersion;
-  status: TaskStatus;
+  status: PipelineNodeRunStatus;
   is_error: boolean;
-  stage_count: number;
-  completed_stages: number;
-  task_count: number;
-  failed_task_count: number;
-  tasks: PipelineTaskResult[];
+  entry_node: string;
+  terminal_node: string;
+  terminal_status: PipelineTerminalStatus | "";
+  exit_code: number;
+  iterations: number;
+  node_run_count: number;
+  failed_node_count: number;
+  node_runs: PipelineNodeRunRecord[];
 }
 
-export interface StageExecutionOutcome {
-  taskResults: PipelineTaskResult[];
-  stopAfterStage: boolean;
+export interface PipelineRuntimeState {
+  iteration: number;
+  totalNodeRuns: number;
+  currentNodeID: string;
+  currentNodeRunID: string;
+}
+
+export interface PipelineConditionScope {
+  decision: JSONObject;
+  run: {
+    exit_code: number;
+    signal: string;
+    timed_out: boolean;
+    status: PipelineNodeRunStatus;
+  };
+  node: {
+    id: string;
+    kind: PipelineNodeKind;
+    attempt: number;
+    run_id: string;
+  };
+  pipeline: {
+    iteration: number;
+    total_node_runs: number;
+  };
 }
 
 export interface PipelineEventPayloadMap {
   plan_start: {
     version: PipelineVersion;
     started_at: string;
-    stage_count: number;
+    entry_node: string;
+    node_count: number;
   };
-  stage_start: {
-    stage_id: string;
-    mode: StageMode;
-    started_at: string;
-    task_count: number;
-    max_parallel: number;
-  };
-  task_start: {
-    stage_id: string;
-    task_id: string;
-    model: Model;
-    verbosity: Verbosity;
-    workspace: WorkspaceMode;
-    prompt_source: PromptSource;
+  node_start: {
+    node_id: string;
+    node_run_id: string;
+    kind: PipelineNodeKind;
+    model: Model | "";
+    prompt_source: "prompt" | "prompt_file" | "";
     prompt_file: string;
-    task_idle_timeout_sec: number;
+    cmd: string;
+    cwd: string;
+    iteration: number;
+    attempt: number;
+    idle_timeout_sec: number;
+    timeout_sec: number;
     started_at: string;
   };
-  task_timeout: {
-    stage_id: string;
-    task_id: string;
+  node_session_bind: {
+    node_id: string;
+    node_run_id: string;
+    session_id: string;
+  };
+  node_timeout: {
+    node_id: string;
+    node_run_id: string;
     idle_timeout_sec: number;
     reason: string;
   };
-  task_session_bind: {
-    stage_id: string;
-    task_id: string;
-    session_id: string;
+  node_finish: PipelineNodeRunRecord;
+  transition_taken: {
+    node_id: string;
+    node_run_id: string;
+    from_node: string;
+    to_node: string;
+    when: string;
+    iteration: number;
   };
-  task_finish: PipelineTaskResult;
-  stage_finish: PipelineStageResult;
   plan_finish: {
-    status: TaskStatus;
+    status: PipelineNodeRunStatus;
     finished_at: string;
     duration_ms: number;
-    stage_count: number;
-    completed_stages: number;
-    task_count: number;
-    failed_task_count: number;
+    iterations: number;
+    node_run_count: number;
+    failed_node_count: number;
+    terminal_node: string;
+    terminal_status: PipelineTerminalStatus | "";
+    exit_code: number;
   };
 }
 

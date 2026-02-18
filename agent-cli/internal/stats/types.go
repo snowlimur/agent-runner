@@ -29,46 +29,50 @@ type RunRecord struct {
 }
 
 type PipelineRunRecord struct {
-	Version         string               `json:"version"`
-	Status          string               `json:"status"`
-	IsError         bool                 `json:"is_error"`
-	StageCount      int                  `json:"stage_count"`
-	CompletedStages int                  `json:"completed_stages"`
-	TaskCount       int                  `json:"task_count"`
-	FailedTaskCount int                  `json:"failed_task_count"`
-	Tasks           []PipelineTaskRecord `json:"tasks"`
+	Version         string                  `json:"version"`
+	Status          string                  `json:"status"`
+	IsError         bool                    `json:"is_error"`
+	EntryNode       string                  `json:"entry_node"`
+	TerminalNode    string                  `json:"terminal_node,omitempty"`
+	TerminalStatus  string                  `json:"terminal_status,omitempty"`
+	ExitCode        int                     `json:"exit_code"`
+	Iterations      int                     `json:"iterations"`
+	NodeRunCount    int                     `json:"node_run_count"`
+	FailedNodeCount int                     `json:"failed_node_count"`
+	NodeRuns        []PipelineNodeRunRecord `json:"node_runs"`
 }
 
-type PipelineTaskRecord struct {
-	StageID      string                  `json:"stage_id"`
-	TaskID       string                  `json:"task_id"`
-	Status       string                  `json:"status"`
-	OnError      string                  `json:"on_error"`
-	Workspace    string                  `json:"workspace"`
-	Model        string                  `json:"model"`
-	Verbosity    string                  `json:"verbosity"`
-	PromptSource string                  `json:"prompt_source"`
-	PromptFile   string                  `json:"prompt_file,omitempty"`
-	ExitCode     int                     `json:"exit_code"`
-	Signal       string                  `json:"signal,omitempty"`
-	StartedAt    time.Time               `json:"started_at"`
-	FinishedAt   time.Time               `json:"finished_at"`
-	DurationMS   int64                   `json:"duration_ms"`
-	Normalized   *PipelineTaskNormalized `json:"normalized,omitempty"`
-	ErrorMessage string                  `json:"error_message,omitempty"`
+type PipelineNodeRunRecord struct {
+	NodeID       string                     `json:"node_id"`
+	NodeRunID    string                     `json:"node_run_id"`
+	Kind         string                     `json:"kind"`
+	Status       string                     `json:"status"`
+	Model        string                     `json:"model"`
+	PromptSource string                     `json:"prompt_source"`
+	PromptFile   string                     `json:"prompt_file,omitempty"`
+	Cmd          string                     `json:"cmd,omitempty"`
+	CWD          string                     `json:"cwd,omitempty"`
+	ExitCode     int                        `json:"exit_code"`
+	Signal       string                     `json:"signal,omitempty"`
+	TimedOut     bool                       `json:"timed_out,omitempty"`
+	StartedAt    time.Time                  `json:"started_at"`
+	FinishedAt   time.Time                  `json:"finished_at"`
+	DurationMS   int64                      `json:"duration_ms"`
+	Normalized   *PipelineNodeRunNormalized `json:"normalized,omitempty"`
+	ErrorMessage string                     `json:"error_message,omitempty"`
 }
 
-type PipelineTaskNormalized struct {
-	InputTokens              int64                              `json:"input_tokens"`
-	CacheCreationInputTokens int64                              `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int64                              `json:"cache_read_input_tokens"`
-	OutputTokens             int64                              `json:"output_tokens"`
-	CostUSD                  float64                            `json:"cost_usd"`
-	WebSearchRequests        int64                              `json:"web_search_requests"`
-	ByModel                  map[string]PipelineTaskModelMetric `json:"by_model"`
+type PipelineNodeRunNormalized struct {
+	InputTokens              int64                                 `json:"input_tokens"`
+	CacheCreationInputTokens int64                                 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int64                                 `json:"cache_read_input_tokens"`
+	OutputTokens             int64                                 `json:"output_tokens"`
+	CostUSD                  float64                               `json:"cost_usd"`
+	WebSearchRequests        int64                                 `json:"web_search_requests"`
+	ByModel                  map[string]PipelineNodeRunModelMetric `json:"by_model"`
 }
 
-type PipelineTaskModelMetric struct {
+type PipelineNodeRunModelMetric struct {
 	InputTokens              int64   `json:"input_tokens"`
 	OutputTokens             int64   `json:"output_tokens"`
 	CacheReadInputTokens     int64   `json:"cache_read_input_tokens"`

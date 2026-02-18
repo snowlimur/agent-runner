@@ -1,6 +1,6 @@
 # Data Codemap
 
-Updated: 2026-02-17
+Updated: 2026-02-18
 
 ## Go Types
 
@@ -17,107 +17,92 @@ RunRecord
 │   ├── Version        string
 │   ├── Status         string
 │   ├── IsError        bool
-│   ├── StageCount     int
-│   ├── CompletedStages int
-│   ├── TaskCount      int
-│   ├── FailedTaskCount int
-│   └── Tasks[]        PipelineTaskRecord
-│       ├── stage/task status metadata (ids, timing, exit, error)
-│       └── Normalized *PipelineTaskNormalized (optional)
+│   ├── EntryNode      string
+│   ├── TerminalNode   string
+│   ├── TerminalStatus string
+│   ├── ExitCode       int
+│   ├── Iterations     int
+│   ├── NodeRunCount   int
+│   ├── FailedNodeCount int
+│   └── NodeRuns[]     PipelineNodeRunRecord
+│       ├── node metadata (node_id, node_run_id, kind, status, timing, exit, error)
+│       └── Normalized *PipelineNodeRunNormalized (optional)
 │           ├── InputTokens, CacheCreation/ReadTokens, OutputTokens
 │           ├── CostUSD, WebSearchRequests
-│           └── ByModel map[string]PipelineTaskModelMetric
+│           └── ByModel map[string]PipelineNodeRunModelMetric
 ├── AgentResult        *AgentResult (optional)
 ├── Normalized         NormalizedMetrics
-│   ├── DurationMS, DurationAPIMS, NumTurns
-│   ├── TotalCostUSD
-│   ├── InputTokens, CacheCreation/ReadTokens, OutputTokens
-│   └── ByModel        map[string]ModelMetric
-├── ErrorType          string
-└── ErrorMessage       string
+└── ErrorType/ErrorMessage
 ```
 
 ### Stream Events (`result/stream_parser.go`)
 
 ```
 StreamEvent
-├── Raw       string
-├── Type      string
-├── System    *SystemEvent    (subtype, session_id, model)
-├── Assistant *AssistantEvent (message_id, session_id, content[])
-│   └── Content → AssistantToolUse (id, name, input: command/description/todos)
-├── User      *UserEvent      (session_id, tool_results[], tool_use_result)
-│   ├── ToolResults[]  (tool_use_id, type, content, is_error)
-│   └── ToolUseResult  (stdout, stderr, interrupted, oldTodos, newTodos)
-├── Pipeline  *PipelineEvent  (event, stage_id, task_id, session_id, status, error_message, idle_timeout_sec, reason)
-└── Result    *AgentResult    (type, subtype, is_error, usage, modelUsage, ...)
+├── System    (subtype, session_id, model)
+├── Assistant (tool_use payloads)
+├── User      (tool_result payloads)
+├── Pipeline  (event, node_id, node_run_id, session_id, status, transition fields, exit/timeout fields)
+└── Result    (final Claude result)
 ```
 
-### Config (`config/config.go`)
+## TypeScript Types (`images/entrypoint/src/lib/types.ts`)
 
-```
-Config
-├── Docker    (image, model, enable_dind, run_idle_timeout_sec, pipeline_task_idle_timeout_sec)
-├── Auth      (github_token, claude_token)
-├── Workspace (source_workspace_dir)
-└── Git       (user_name, user_email)
-```
-
-## TypeScript Types (`types.ts`)
-
-### Pipeline Plan
+### Pipeline Plan v2
 
 ```
 PipelinePlan
-├── version    PipelineVersion ("v1")
-├── defaults   PipelineDefaults (model, verbosity, onError, workspace, taskIdleTimeoutSec)
-└── stages[]   PipelineStage
-    ├── id, mode (sequential | parallel), maxParallel, taskIdleTimeoutSec
-    ├── onError, workspace, model, verbosity
-    └── tasks[]  PipelineTask
-        ├── id, promptText, promptFile (PromptFileRef | null)
-        ├── onError, workspace, model, verbosity, taskIdleTimeoutSec
-        └── readOnly, allowSharedWrites
+├── version: "v2"
+├── entryNode
+├── defaults
+│   ├── model
+│   ├── agentIdleTimeoutSec
+│   └── commandTimeoutSec
+├── limits
+│   ├── maxIterations
+│   └── maxSameNodeHits
+└── nodes (mapping)
+    ├── PipelineExecutableNode
+    │   ├── run.kind = agent | command
+    │   └── transitions[] (when -> to)
+    └── PipelineTerminalNode
+        ├── terminal = true
+        ├── terminalStatus
+        └── exitCode
 ```
 
-### Pipeline Results
+### Pipeline Result v2
 
 ```
-PipelineResult (emitted as final JSON on stdout)
+PipelineResult
 ├── type: "pipeline_result"
-├── version, status, is_error
-├── stage_count, completed_stages, task_count, failed_task_count
-└── tasks[]  PipelineTaskResult
-    ├── stage_id, task_id, status, on_error
-    ├── workspace, model, verbosity, prompt_source, prompt_file
-    ├── exit_code, signal, started_at, finished_at, duration_ms
-    └── error_message
+├── version: "v2"
+├── status, is_error
+├── entry_node, terminal_node, terminal_status, exit_code
+├── iterations, node_run_count, failed_node_count
+└── node_runs[]
 ```
 
-Note: `agent-cli` enriches `stats.json` pipeline tasks with optional
-`normalized` usage metrics when a task has bound `result` events.
-
-### Pipeline Events (emitted on stdout during execution)
+### Pipeline Events v2
 
 | Event | Key Fields |
 |-------|------------|
-| `plan_start` | version, started_at, stage_count |
-| `stage_start` | stage_id, mode, task_count, max_parallel |
-| `task_start` | stage_id, task_id, model, verbosity, workspace, task_idle_timeout_sec |
-| `task_timeout` | stage_id, task_id, idle_timeout_sec, reason |
-| `task_session_bind` | stage_id, task_id, session_id |
-| `task_finish` | PipelineTaskResult |
-| `stage_finish` | PipelineStageResult |
-| `plan_finish` | status, duration_ms, stage/task counts |
+| `plan_start` | version, entry_node, node_count |
+| `node_start` | node_id, node_run_id, kind, model/cmd, attempt, iteration |
+| `node_session_bind` | node_id, node_run_id, session_id |
+| `node_timeout` | node_id, node_run_id, idle_timeout_sec, reason |
+| `node_finish` | full node run payload |
+| `transition_taken` | from_node, to_node, when, node_run_id |
+| `plan_finish` | status, iterations, node_run_count, failed_node_count, terminal fields, exit_code |
 
 ## Storage Layout
 
 ```
 <project>/.agent-cli/
-├── config.toml                          # Project config
+├── config.toml
 └── runs/
-    └── <YYYYMMDDTHHMMSS>-<hex_id>/     # Per-run directory
-        ├── stats.json                   # RunRecord
-        ├── output.ndjson                # JSON object logs (NDJSON)
-        └── output.log                   # Non-JSON-object lines
+    └── <YYYYMMDDTHHMMSS>-<hex_id>/
+        ├── stats.json
+        ├── output.ndjson
+        └── output.log
 ```

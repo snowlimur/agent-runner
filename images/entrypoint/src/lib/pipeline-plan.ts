@@ -3,24 +3,29 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 import {
-  PIPELINE_DEFAULT_ON_ERROR,
-  PIPELINE_DEFAULT_TASK_IDLE_TIMEOUT_SEC,
-  PIPELINE_DEFAULT_VERBOSITY,
-  PIPELINE_DEFAULT_WORKSPACE,
+  PIPELINE_DEFAULT_AGENT_IDLE_TIMEOUT_SEC,
+  PIPELINE_DEFAULT_COMMAND_TIMEOUT_SEC,
+  PIPELINE_DEFAULT_MAX_ITERATIONS,
+  PIPELINE_DEFAULT_MAX_SAME_NODE_HITS,
   PIPELINE_VERSION,
   TARGET_WORKSPACE_DIR,
 } from "./constants.js";
+import { compileCondition } from "./condition-eval.js";
 import type {
   EntrypointArgs,
+  JSONValue,
   Model,
-  OnErrorPolicy,
+  PipelineAgentRun,
+  PipelineCommandRun,
   PipelineDefaults,
+  PipelineExecutableNode,
+  PipelineLimits,
+  PipelineNode,
   PipelinePlan,
-  PipelineTask,
+  PipelineTerminalNode,
+  PipelineTerminalStatus,
   PromptFileRef,
-  StageMode,
-  Verbosity,
-  WorkspaceMode,
+  JSONObject,
 } from "./types.js";
 import { isPlainObject, parsePositiveInteger, requireNonEmptyString, runSync } from "./utils.js";
 
@@ -43,96 +48,14 @@ try {
   yamlModule = null;
 }
 
-function normalizeModelValue(value: unknown, fieldName: string, fallback: Model): Model {
-  const base = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
-  const model = String(base).trim().toLowerCase();
-  if (model === "sonnet" || model === "opus") {
-    return model;
+export class PipelinePlanError extends Error {
+  readonly exitCode: number;
+
+  constructor(message: string, exitCode = 2) {
+    super(message);
+    this.name = "PipelinePlanError";
+    this.exitCode = exitCode;
   }
-
-  throw new Error(`${fieldName} must be one of: sonnet, opus.`);
-}
-
-function normalizeVerbosityValue(value: unknown, fieldName: string, fallback: Verbosity): Verbosity {
-  const base = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
-  const normalized = String(base).trim().toLowerCase();
-  if (normalized === "text") {
-    return "text";
-  }
-  if (normalized === "v" || normalized === "json") {
-    return "v";
-  }
-  if (normalized === "vv" || normalized === "stream-json" || normalized === "stream_json") {
-    return "vv";
-  }
-
-  throw new Error(`${fieldName} must be one of: text, v, vv.`);
-}
-
-function normalizeOnErrorValue(value: unknown, fieldName: string, fallback: OnErrorPolicy): OnErrorPolicy {
-  const base = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
-  const normalized = String(base).trim().toLowerCase();
-  if (normalized === "fail_fast" || normalized === "continue") {
-    return normalized;
-  }
-
-  throw new Error(`${fieldName} must be one of: fail_fast, continue.`);
-}
-
-function normalizeWorkspaceValue(
-  value: unknown,
-  fieldName: string,
-  fallback: WorkspaceMode,
-): WorkspaceMode {
-  const base = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
-  const normalized = String(base).trim().toLowerCase();
-  if (normalized === "shared" || normalized === "worktree" || normalized === "snapshot_ro") {
-    return normalized;
-  }
-
-  throw new Error(`${fieldName} must be one of: shared, worktree, snapshot_ro.`);
-}
-
-function normalizeOptionalBoolean(value: unknown, fieldName: string): boolean | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  throw new Error(`${fieldName} must be a boolean.`);
-}
-
-function requireObject(value: unknown, fieldName: string): Record<string, unknown> {
-  if (!isPlainObject(value)) {
-    throw new Error(`${fieldName} must be an object.`);
-  }
-  return value;
-}
-
-export function resolvePromptFilePath(inputPath: unknown, fieldName: string): PromptFileRef {
-  const trimmed = requireNonEmptyString(inputPath, fieldName).replaceAll("\\", "/");
-  if (path.posix.isAbsolute(trimmed)) {
-    throw new Error(`${fieldName} must be relative to ${TARGET_WORKSPACE_DIR}: ${trimmed}`);
-  }
-
-  const normalized = path.posix.normalize(trimmed);
-  if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../")) {
-    throw new Error(`${fieldName} must stay within ${TARGET_WORKSPACE_DIR}: ${trimmed}`);
-  }
-
-  const workspaceRoot = path.resolve(TARGET_WORKSPACE_DIR);
-  const resolved = path.resolve(workspaceRoot, normalized);
-  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}${path.sep}`)) {
-    throw new Error(`${fieldName} must stay within ${TARGET_WORKSPACE_DIR}: ${trimmed}`);
-  }
-
-  return {
-    raw: trimmed,
-    normalized,
-    resolved,
-  };
 }
 
 function parseYamlViaRuby(rawYaml: string): unknown {
@@ -158,11 +81,11 @@ export function parseYamlPlan(rawYaml: string): Record<string, unknown> {
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to parse YAML plan: ${message}`);
+    throw new PipelinePlanError(`Failed to parse YAML plan: ${message}`);
   }
 
   if (!isPlainObject(parsed)) {
-    throw new Error("Pipeline plan root must be a YAML mapping/object.");
+    throw new PipelinePlanError("Pipeline plan root must be a YAML mapping/object.");
   }
 
   return parsed;
@@ -176,25 +99,116 @@ export function resolvePipelineFilePath(pipelinePath: unknown): string {
   return path.resolve(TARGET_WORKSPACE_DIR, trimmed);
 }
 
+function requireObject(value: unknown, fieldName: string): Record<string, unknown> {
+  if (!isPlainObject(value)) {
+    throw new PipelinePlanError(`${fieldName} must be an object.`);
+  }
+  return value;
+}
+
+function normalizeModelValue(value: unknown, fieldName: string, fallback: Model): Model {
+  const base = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
+  const model = String(base).trim().toLowerCase();
+  if (model === "sonnet" || model === "opus") {
+    return model;
+  }
+
+  throw new PipelinePlanError(`${fieldName} must be one of: sonnet, opus.`);
+}
+
+function normalizeTerminalStatus(value: unknown, fieldName: string): PipelineTerminalStatus {
+  const status = requireNonEmptyString(value, fieldName).toLowerCase();
+  if (status === "success" || status === "blocked" || status === "failed" || status === "canceled") {
+    return status;
+  }
+
+  throw new PipelinePlanError(`${fieldName} must be one of: success, blocked, failed, canceled.`);
+}
+
+function parseExitCode(value: unknown, fieldName: string): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    throw new PipelinePlanError(`${fieldName} must be an integer in range 0..255.`);
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) {
+    throw new PipelinePlanError(`${fieldName} must be an integer in range 0..255.`);
+  }
+
+  return parsed;
+}
+
+function normalizePromptFilePath(inputPath: unknown, fieldName: string): PromptFileRef {
+  const trimmed = requireNonEmptyString(inputPath, fieldName).replaceAll("\\", "/");
+  if (path.posix.isAbsolute(trimmed)) {
+    throw new PipelinePlanError(`${fieldName} must be relative to ${TARGET_WORKSPACE_DIR}: ${trimmed}`);
+  }
+
+  const normalized = path.posix.normalize(trimmed);
+  if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+    throw new PipelinePlanError(`${fieldName} must stay within ${TARGET_WORKSPACE_DIR}: ${trimmed}`);
+  }
+
+  const workspaceRoot = path.resolve(TARGET_WORKSPACE_DIR);
+  const resolved = path.resolve(workspaceRoot, normalized);
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new PipelinePlanError(`${fieldName} must stay within ${TARGET_WORKSPACE_DIR}: ${trimmed}`);
+  }
+
+  return {
+    raw: trimmed,
+    normalized,
+    resolved,
+  };
+}
+
+function resolveCommandCWD(inputPath: unknown, fieldName: string): string {
+  if (inputPath === undefined || inputPath === null || String(inputPath).trim() === "") {
+    return TARGET_WORKSPACE_DIR;
+  }
+
+  const raw = requireNonEmptyString(inputPath, fieldName).replaceAll("\\", "/");
+  const workspaceRoot = path.resolve(TARGET_WORKSPACE_DIR);
+
+  const resolved = path.isAbsolute(raw)
+    ? path.resolve(raw)
+    : path.resolve(workspaceRoot, path.posix.normalize(raw));
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new PipelinePlanError(`${fieldName} must stay within ${TARGET_WORKSPACE_DIR}: ${raw}`);
+  }
+
+  return resolved;
+}
+
 function resolveDefaults(rawPlan: Record<string, unknown>, fallbackModel: Model): PipelineDefaults {
   const rawDefaults = isPlainObject(rawPlan.defaults) ? rawPlan.defaults : {};
 
   return {
     model: normalizeModelValue(rawDefaults.model, "defaults.model", fallbackModel),
-    verbosity: normalizeVerbosityValue(rawDefaults.verbosity, "defaults.verbosity", PIPELINE_DEFAULT_VERBOSITY),
-    onError: normalizeOnErrorValue(rawDefaults.on_error, "defaults.on_error", PIPELINE_DEFAULT_ON_ERROR),
-    workspace: normalizeWorkspaceValue(rawDefaults.workspace, "defaults.workspace", PIPELINE_DEFAULT_WORKSPACE),
-    taskIdleTimeoutSec: parsePositiveInteger(
-      rawDefaults.task_idle_timeout_sec,
-      PIPELINE_DEFAULT_TASK_IDLE_TIMEOUT_SEC,
+    agentIdleTimeoutSec: parsePositiveInteger(
+      rawDefaults.agent_idle_timeout_sec,
+      PIPELINE_DEFAULT_AGENT_IDLE_TIMEOUT_SEC,
     ),
+    commandTimeoutSec: parsePositiveInteger(
+      rawDefaults.command_timeout_sec,
+      PIPELINE_DEFAULT_COMMAND_TIMEOUT_SEC,
+    ),
+  };
+}
+
+function resolveLimits(rawPlan: Record<string, unknown>): PipelineLimits {
+  const rawLimits = isPlainObject(rawPlan.limits) ? rawPlan.limits : {};
+
+  return {
+    maxIterations: parsePositiveInteger(rawLimits.max_iterations, PIPELINE_DEFAULT_MAX_ITERATIONS),
+    maxSameNodeHits: parsePositiveInteger(rawLimits.max_same_node_hits, PIPELINE_DEFAULT_MAX_SAME_NODE_HITS),
   };
 }
 
 function applyInlinePromptTemplate(
   prompt: string,
-  stageID: string,
-  taskID: string,
+  nodeID: string,
   templateVars: Readonly<Record<string, string>>,
   usedTemplateVars: Set<string>,
 ): string {
@@ -211,10 +225,180 @@ function applyInlinePromptTemplate(
 
   if (missingVars.size > 0) {
     const missing = [...missingVars].sort().join(", ");
-    throw new Error(`Missing template vars for ${stageID}/${taskID}: ${missing}`);
+    throw new PipelinePlanError(`Missing template vars for ${nodeID}: ${missing}`);
   }
 
   return replaced;
+}
+
+function parseDecisionSchema(schemaPath: PromptFileRef): JSONObject {
+  let rawSchema = "";
+  try {
+    rawSchema = fs.readFileSync(schemaPath.resolved, "utf8");
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new PipelinePlanError(`Failed to read schema file ${schemaPath.normalized}: ${message}`);
+  }
+
+  if (!rawSchema.trim()) {
+    throw new PipelinePlanError(`Schema file is empty: ${schemaPath.normalized}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawSchema);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new PipelinePlanError(`Invalid JSON in schema file ${schemaPath.normalized}: ${message}`);
+  }
+
+  if (!isPlainObject(parsed)) {
+    throw new PipelinePlanError(`Schema file must contain a JSON object: ${schemaPath.normalized}`);
+  }
+
+  return parsed as JSONObject;
+}
+
+function parseTransitions(rawTransitions: unknown, fieldName: string): PipelineExecutableNode["transitions"] {
+  if (!Array.isArray(rawTransitions) || rawTransitions.length === 0) {
+    throw new PipelinePlanError(`${fieldName} must be a non-empty array.`);
+  }
+
+  return rawTransitions.map((rawTransition, index) => {
+    const transition = requireObject(rawTransition, `${fieldName}[${index}]`);
+    const when = requireNonEmptyString(transition.when, `${fieldName}[${index}].when`);
+    const to = requireNonEmptyString(transition.to, `${fieldName}[${index}].to`);
+
+    try {
+      compileCondition(when);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new PipelinePlanError(`${fieldName}[${index}].when is invalid: ${message}`);
+    }
+
+    return {
+      when,
+      to,
+    };
+  });
+}
+
+function resolveAgentRun(
+  nodeID: string,
+  rawRun: Record<string, unknown>,
+  defaults: PipelineDefaults,
+  templateVars: Readonly<Record<string, string>>,
+  usedTemplateVars: Set<string>,
+): PipelineAgentRun {
+  const promptValue = typeof rawRun.prompt === "string" ? rawRun.prompt.trim() : "";
+  const promptFileValue = typeof rawRun.prompt_file === "string" ? rawRun.prompt_file.trim() : "";
+
+  if (!promptValue && !promptFileValue) {
+    throw new PipelinePlanError(`nodes.${nodeID}.run must contain exactly one of: prompt, prompt_file.`);
+  }
+  if (promptValue && promptFileValue) {
+    throw new PipelinePlanError(`nodes.${nodeID}.run must contain exactly one of: prompt, prompt_file.`);
+  }
+
+  let promptText = "";
+  let promptFile: PromptFileRef | null = null;
+  if (promptFileValue) {
+    promptFile = normalizePromptFilePath(promptFileValue, `nodes.${nodeID}.run.prompt_file`);
+    let content = "";
+    try {
+      content = fs.readFileSync(promptFile.resolved, "utf8");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new PipelinePlanError(`Failed to read prompt_file for ${nodeID} (${promptFile.normalized}): ${message}`);
+    }
+    promptText = content.trim();
+  } else {
+    promptText = applyInlinePromptTemplate(promptValue, nodeID, templateVars, usedTemplateVars);
+  }
+
+  if (!promptText.trim()) {
+    throw new PipelinePlanError(`Prompt is empty for node ${nodeID}.`);
+  }
+
+  const decisionRaw = requireObject(rawRun.decision, `nodes.${nodeID}.run.decision`);
+  const schemaFile = normalizePromptFilePath(decisionRaw.schema_file, `nodes.${nodeID}.run.decision.schema_file`);
+  const schema = parseDecisionSchema(schemaFile);
+
+  return {
+    kind: "agent",
+    model: normalizeModelValue(rawRun.model, `nodes.${nodeID}.run.model`, defaults.model),
+    promptFile,
+    promptText,
+    idleTimeoutSec: parsePositiveInteger(rawRun.idle_timeout_sec, defaults.agentIdleTimeoutSec),
+    decision: {
+      schemaFile,
+      schema,
+    },
+  };
+}
+
+function resolveCommandRun(nodeID: string, rawRun: Record<string, unknown>, defaults: PipelineDefaults): PipelineCommandRun {
+  return {
+    kind: "command",
+    cmd: requireNonEmptyString(rawRun.cmd, `nodes.${nodeID}.run.cmd`),
+    cwd: resolveCommandCWD(rawRun.cwd, `nodes.${nodeID}.run.cwd`),
+    timeoutSec: parsePositiveInteger(rawRun.timeout_sec, defaults.commandTimeoutSec),
+  };
+}
+
+function resolveNode(
+  nodeID: string,
+  rawNode: unknown,
+  defaults: PipelineDefaults,
+  templateVars: Readonly<Record<string, string>>,
+  usedTemplateVars: Set<string>,
+): PipelineNode {
+  const node = requireObject(rawNode, `nodes.${nodeID}`);
+
+  if (node.terminal === true) {
+    if (node.run !== undefined) {
+      throw new PipelinePlanError(`nodes.${nodeID}.run is forbidden for terminal node.`);
+    }
+    if (node.transitions !== undefined) {
+      throw new PipelinePlanError(`nodes.${nodeID}.transitions is forbidden for terminal node.`);
+    }
+
+    const terminalNode: PipelineTerminalNode = {
+      id: nodeID,
+      terminal: true,
+      terminalStatus: normalizeTerminalStatus(node.terminal_status, `nodes.${nodeID}.terminal_status`),
+      exitCode: parseExitCode(node.exit_code, `nodes.${nodeID}.exit_code`),
+      message: typeof node.message === "string" ? node.message.trim() : "",
+    };
+
+    return terminalNode;
+  }
+
+  if (node.terminal !== undefined && node.terminal !== false) {
+    throw new PipelinePlanError(`nodes.${nodeID}.terminal must be boolean.`);
+  }
+
+  if (node.exit_code !== undefined || node.terminal_status !== undefined || node.message !== undefined) {
+    throw new PipelinePlanError(`nodes.${nodeID} terminal fields are allowed only when terminal=true.`);
+  }
+
+  const rawRun = requireObject(node.run, `nodes.${nodeID}.run`);
+  const kind = requireNonEmptyString(rawRun.kind, `nodes.${nodeID}.run.kind`).toLowerCase();
+
+  const run =
+    kind === "agent"
+      ? resolveAgentRun(nodeID, rawRun, defaults, templateVars, usedTemplateVars)
+      : kind === "command"
+      ? resolveCommandRun(nodeID, rawRun, defaults)
+      : (() => {
+          throw new PipelinePlanError(`nodes.${nodeID}.run.kind must be one of: agent, command.`);
+        })();
+
+  return {
+    id: nodeID,
+    run,
+    transitions: parseTransitions(node.transitions, `nodes.${nodeID}.transitions`),
+  };
 }
 
 export function loadPipelinePlan(
@@ -223,190 +407,70 @@ export function loadPipelinePlan(
   templateVars: Readonly<Record<string, string>>,
 ): PipelinePlan {
   if (!isPlainObject(rawPlan)) {
-    throw new Error("Pipeline plan root must be a YAML mapping/object.");
+    throw new PipelinePlanError("Pipeline plan root must be a YAML mapping/object.");
   }
 
   const version = requireNonEmptyString(rawPlan.version ?? "", "version");
   if (version !== PIPELINE_VERSION) {
-    throw new Error(`Unsupported plan version: ${version}. Expected ${PIPELINE_VERSION}.`);
+    throw new PipelinePlanError(`Unsupported plan version: ${version}. Expected ${PIPELINE_VERSION}.`);
   }
 
+  const entryNode = requireNonEmptyString(rawPlan.entry, "entry");
   const defaults = resolveDefaults(rawPlan, fallbackModel);
+  const limits = resolveLimits(rawPlan);
 
-  if (!Array.isArray(rawPlan.stages) || rawPlan.stages.length === 0) {
-    throw new Error("stages must be a non-empty array.");
+  const rawNodes = requireObject(rawPlan.nodes, "nodes");
+  const nodeEntries = Object.entries(rawNodes);
+  if (nodeEntries.length === 0) {
+    throw new PipelinePlanError("nodes must define at least one node.");
   }
 
-  const stageIDs = new Set<string>();
   const usedTemplateVars = new Set<string>();
-  const stages: PipelinePlan["stages"] = rawPlan.stages.map((rawStage, stageIndex) => {
-    const stage = requireObject(rawStage, `stages[${stageIndex}]`);
+  const nodeOrder: string[] = [];
+  const nodes: Record<string, PipelineNode> = {};
 
-    const stageID = requireNonEmptyString(stage.id, `stages[${stageIndex}].id`);
-    if (stageIDs.has(stageID)) {
-      throw new Error(`stages[${stageIndex}].id is duplicated: ${stageID}`);
+  for (const [nodeID, rawNode] of nodeEntries) {
+    const normalizedID = requireNonEmptyString(nodeID, "node id");
+    if (nodes[normalizedID]) {
+      throw new PipelinePlanError(`Duplicate node id: ${normalizedID}`);
     }
-    stageIDs.add(stageID);
+    nodeOrder.push(normalizedID);
+    nodes[normalizedID] = resolveNode(normalizedID, rawNode, defaults, templateVars, usedTemplateVars);
+  }
 
-    const modeValue = requireNonEmptyString(stage.mode, `stages[${stageIndex}].mode`).toLowerCase();
-    if (modeValue !== "sequential" && modeValue !== "parallel") {
-      throw new Error(`stages[${stageIndex}].mode must be one of: sequential, parallel.`);
+  if (!nodes[entryNode]) {
+    throw new PipelinePlanError(`entry node is not defined in nodes: ${entryNode}`);
+  }
+
+  for (const node of Object.values(nodes)) {
+    if ("terminal" in node && node.terminal) {
+      continue;
     }
+    const executableNode = node as PipelineExecutableNode;
 
-    const rawTasks = stage.tasks;
-    if (!Array.isArray(rawTasks) || rawTasks.length === 0) {
-      throw new Error(`stages[${stageIndex}].tasks must be a non-empty array.`);
-    }
-
-    const mode: StageMode = modeValue;
-    let maxParallel = rawTasks.length;
-    if (mode === "parallel") {
-      maxParallel = parsePositiveInteger(stage.max_parallel, rawTasks.length);
-    }
-
-    const stageOnError = normalizeOnErrorValue(stage.on_error, `stages[${stageIndex}].on_error`, defaults.onError);
-    const stageWorkspace = normalizeWorkspaceValue(
-      stage.workspace,
-      `stages[${stageIndex}].workspace`,
-      defaults.workspace,
-    );
-    const stageModel = normalizeModelValue(stage.model, `stages[${stageIndex}].model`, defaults.model);
-    const stageVerbosity = normalizeVerbosityValue(
-      stage.verbosity,
-      `stages[${stageIndex}].verbosity`,
-      defaults.verbosity,
-    );
-    const stageTaskIdleTimeoutSec = parsePositiveInteger(
-      stage.task_idle_timeout_sec,
-      defaults.taskIdleTimeoutSec,
-    );
-
-    const taskIDs = new Set<string>();
-    const tasks: PipelineTask[] = rawTasks.map((rawTask, taskIndex) => {
-      const task = requireObject(rawTask, `stages[${stageIndex}].tasks[${taskIndex}]`);
-
-      const taskID = requireNonEmptyString(task.id, `stages[${stageIndex}].tasks[${taskIndex}].id`);
-      if (taskIDs.has(taskID)) {
-        throw new Error(`Duplicate task id in stage ${stageID}: ${taskID}`);
-      }
-      taskIDs.add(taskID);
-
-      const promptValue = typeof task.prompt === "string" ? task.prompt.trim() : "";
-      const promptFileValue = typeof task.prompt_file === "string" ? task.prompt_file.trim() : "";
-
-      if (!promptValue && !promptFileValue) {
-        throw new Error(
-          `stages[${stageIndex}].tasks[${taskIndex}] must contain exactly one of: prompt, prompt_file.`,
+    for (const transition of executableNode.transitions) {
+      if (!nodes[transition.to]) {
+        throw new PipelinePlanError(
+          `nodes.${executableNode.id}.transitions has unknown target node: ${transition.to}`,
         );
       }
-      if (promptValue && promptFileValue) {
-        throw new Error(
-          `stages[${stageIndex}].tasks[${taskIndex}] must contain exactly one of: prompt, prompt_file.`,
-        );
-      }
-
-      let promptFile: PromptFileRef | null = null;
-      let promptText = "";
-      if (promptFileValue) {
-        promptFile = resolvePromptFilePath(
-          promptFileValue,
-          `stages[${stageIndex}].tasks[${taskIndex}].prompt_file`,
-        );
-
-        let content: string;
-        try {
-          content = fs.readFileSync(promptFile.resolved, "utf8");
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(
-            `Failed to read prompt_file for ${stageID}/${taskID} (${promptFile.normalized}): ${message}`,
-          );
-        }
-
-        promptText = content.trim();
-        if (!promptText) {
-          throw new Error(`prompt_file is empty for ${stageID}/${taskID}: ${promptFile.normalized}`);
-        }
-      } else {
-        const inlinePrompt = requireNonEmptyString(promptValue, `task prompt for ${stageID}/${taskID}`);
-        promptText = applyInlinePromptTemplate(inlinePrompt, stageID, taskID, templateVars, usedTemplateVars);
-      }
-
-      const taskOnError = normalizeOnErrorValue(
-        task.on_error,
-        `stages[${stageIndex}].tasks[${taskIndex}].on_error`,
-        stageOnError,
-      );
-      const taskWorkspace = normalizeWorkspaceValue(
-        task.workspace,
-        `stages[${stageIndex}].tasks[${taskIndex}].workspace`,
-        stageWorkspace,
-      );
-      const taskModel = normalizeModelValue(task.model, `stages[${stageIndex}].tasks[${taskIndex}].model`, stageModel);
-      const taskVerbosity = normalizeVerbosityValue(
-        task.verbosity,
-        `stages[${stageIndex}].tasks[${taskIndex}].verbosity`,
-        stageVerbosity,
-      );
-
-      const readOnly = normalizeOptionalBoolean(task.read_only, `stages[${stageIndex}].tasks[${taskIndex}].read_only`);
-      const allowSharedWrites = normalizeOptionalBoolean(
-        task.allow_shared_writes,
-        `stages[${stageIndex}].tasks[${taskIndex}].allow_shared_writes`,
-      );
-      const taskIdleTimeoutSec = parsePositiveInteger(
-        task.task_idle_timeout_sec,
-        stageTaskIdleTimeoutSec,
-      );
-
-      return {
-        id: taskID,
-        promptFile,
-        onError: taskOnError,
-        workspace: taskWorkspace,
-        model: taskModel,
-        verbosity: taskVerbosity,
-        readOnly: Boolean(readOnly),
-        allowSharedWrites: Boolean(allowSharedWrites),
-        promptText,
-        taskIdleTimeoutSec,
-      };
-    });
-
-    if (mode === "parallel") {
-      for (const task of tasks) {
-        if (task.workspace === "shared" && !task.readOnly && !task.allowSharedWrites) {
-          throw new Error(
-            `Parallel task ${stageID}/${task.id} uses shared workspace with writes. Set read_only=true or allow_shared_writes=true.`,
-          );
-        }
-      }
     }
-
-    return {
-      id: stageID,
-      mode,
-      maxParallel,
-      onError: stageOnError,
-      workspace: stageWorkspace,
-      model: stageModel,
-      verbosity: stageVerbosity,
-      taskIdleTimeoutSec: stageTaskIdleTimeoutSec,
-      tasks,
-    };
-  });
+  }
 
   const unusedTemplateVars = Object.keys(templateVars)
     .filter((name) => !usedTemplateVars.has(name))
     .sort();
   if (unusedTemplateVars.length > 0) {
-    throw new Error(`Unused template vars: ${unusedTemplateVars.join(", ")}`);
+    throw new PipelinePlanError(`Unused template vars: ${unusedTemplateVars.join(", ")}`);
   }
 
   return {
     version: PIPELINE_VERSION,
+    entryNode,
     defaults,
-    stages,
+    limits,
+    nodeOrder,
+    nodes,
   };
 }
 
@@ -419,9 +483,118 @@ export function resolvePipelinePlan(args: EntrypointArgs, fallbackModel: Model):
   const resolvedPlanPath = resolvePipelineFilePath(args.pipelinePath);
   const rawYaml = fs.readFileSync(resolvedPlanPath, "utf8");
   if (!rawYaml.trim()) {
-    throw new Error(`Pipeline file is empty: ${resolvedPlanPath}`);
+    throw new PipelinePlanError(`Pipeline file is empty: ${resolvedPlanPath}`);
   }
 
   const rawPlan = parseYamlPlan(rawYaml);
   return loadPipelinePlan(rawPlan, fallbackModel, args.templateVars);
+}
+
+export function validateDecisionJSONSchema(
+  schema: JSONObject,
+  value: JSONValue,
+  fieldName = "decision",
+): string[] {
+  const errors: string[] = [];
+
+  function validate(schemaNode: JSONValue, currentValue: JSONValue, pathName: string): void {
+    if (!isPlainObject(schemaNode)) {
+      errors.push(`${pathName}: schema node must be an object`);
+      return;
+    }
+
+    const node = schemaNode as Record<string, JSONValue>;
+    const schemaType = typeof node.type === "string" ? node.type : "";
+    if (schemaType) {
+      if (schemaType === "object") {
+        if (currentValue === null || typeof currentValue !== "object" || Array.isArray(currentValue)) {
+          errors.push(`${pathName}: expected object`);
+          return;
+        }
+      } else if (schemaType === "array") {
+        if (!Array.isArray(currentValue)) {
+          errors.push(`${pathName}: expected array`);
+          return;
+        }
+      } else if (schemaType === "string") {
+        if (typeof currentValue !== "string") {
+          errors.push(`${pathName}: expected string`);
+          return;
+        }
+      } else if (schemaType === "number") {
+        if (typeof currentValue !== "number") {
+          errors.push(`${pathName}: expected number`);
+          return;
+        }
+      } else if (schemaType === "integer") {
+        if (typeof currentValue !== "number" || !Number.isInteger(currentValue)) {
+          errors.push(`${pathName}: expected integer`);
+          return;
+        }
+      } else if (schemaType === "boolean") {
+        if (typeof currentValue !== "boolean") {
+          errors.push(`${pathName}: expected boolean`);
+          return;
+        }
+      } else if (schemaType === "null") {
+        if (currentValue !== null) {
+          errors.push(`${pathName}: expected null`);
+          return;
+        }
+      } else {
+        errors.push(`${pathName}: unsupported schema type ${schemaType}`);
+        return;
+      }
+    }
+
+    if (Array.isArray(node.enum)) {
+      const matched = node.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(currentValue));
+      if (!matched) {
+        errors.push(`${pathName}: value is not in enum`);
+        return;
+      }
+    }
+
+    if (schemaType === "object") {
+      const objectValue = currentValue as Record<string, JSONValue>;
+      const required = Array.isArray(node.required) ? node.required : [];
+      for (const requiredField of required) {
+        if (typeof requiredField !== "string") {
+          continue;
+        }
+        if (!Object.prototype.hasOwnProperty.call(objectValue, requiredField)) {
+          errors.push(`${pathName}.${requiredField}: missing required field`);
+        }
+      }
+
+      const properties = isPlainObject(node.properties) ? (node.properties as Record<string, JSONValue>) : {};
+      for (const [propertyName, propertySchema] of Object.entries(properties)) {
+        if (!Object.prototype.hasOwnProperty.call(objectValue, propertyName)) {
+          continue;
+        }
+        validate(propertySchema, objectValue[propertyName] ?? null, `${pathName}.${propertyName}`);
+      }
+
+      if (node.additionalProperties === false) {
+        const allowedFields = new Set(Object.keys(properties));
+        for (const key of Object.keys(objectValue)) {
+          if (!allowedFields.has(key)) {
+            errors.push(`${pathName}.${key}: additional property is not allowed`);
+          }
+        }
+      }
+    }
+
+    if (schemaType === "array") {
+      const arrayValue = currentValue as JSONValue[];
+      if (isPlainObject(node.items)) {
+        for (let index = 0; index < arrayValue.length; index += 1) {
+          validate(node.items as JSONValue, arrayValue[index] ?? null, `${pathName}[${index}]`);
+        }
+      }
+    }
+  }
+
+  validate(schema, value, fieldName);
+  return errors;
 }

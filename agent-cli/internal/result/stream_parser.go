@@ -85,35 +85,37 @@ type UserToolUseResult struct {
 }
 
 type PipelineEvent struct {
-	Event              string `json:"event"`
-	Version            string `json:"version"`
-	StageID            string `json:"stage_id"`
-	TaskID             string `json:"task_id"`
-	SessionID          string `json:"session_id"`
-	Status             string `json:"status"`
-	Mode               string `json:"mode"`
-	Model              string `json:"model"`
-	Verbosity          string `json:"verbosity"`
-	Workspace          string `json:"workspace"`
-	OnError            string `json:"on_error"`
-	PromptSource       string `json:"prompt_source"`
-	PromptFile         string `json:"prompt_file"`
-	Signal             string `json:"signal"`
-	StartedAt          string `json:"started_at"`
-	FinishedAt         string `json:"finished_at"`
-	ErrorMessage       string `json:"error_message"`
-	Reason             string `json:"reason"`
-	StageCount         int    `json:"stage_count"`
-	CompletedStages    int    `json:"completed_stages"`
-	TaskCount          int    `json:"task_count"`
-	FailedTaskCount    int    `json:"failed_task_count"`
-	CompletedTasks     int    `json:"completed_tasks"`
-	FailedTasks        int    `json:"failed_tasks"`
-	MaxParallel        int    `json:"max_parallel"`
-	IdleTimeoutSec     int    `json:"idle_timeout_sec"`
-	TaskIdleTimeoutSec int    `json:"task_idle_timeout_sec"`
-	ExitCode           int    `json:"exit_code"`
-	DurationMS         int64  `json:"duration_ms"`
+	Event           string `json:"event"`
+	Version         string `json:"version"`
+	NodeID          string `json:"node_id"`
+	NodeRunID       string `json:"node_run_id"`
+	SessionID       string `json:"session_id"`
+	Status          string `json:"status"`
+	Kind            string `json:"kind"`
+	Model           string `json:"model"`
+	PromptSource    string `json:"prompt_source"`
+	PromptFile      string `json:"prompt_file"`
+	Cmd             string `json:"cmd"`
+	CWD             string `json:"cwd"`
+	EntryNode       string `json:"entry_node"`
+	TerminalNode    string `json:"terminal_node"`
+	TerminalStatus  string `json:"terminal_status"`
+	FromNode        string `json:"from_node"`
+	ToNode          string `json:"to_node"`
+	When            string `json:"when"`
+	Reason          string `json:"reason"`
+	ErrorMessage    string `json:"error_message"`
+	StartedAt       string `json:"started_at"`
+	FinishedAt      string `json:"finished_at"`
+	DurationMS      int64  `json:"duration_ms"`
+	Iteration       int    `json:"iteration"`
+	Attempt         int    `json:"attempt"`
+	NodeCount       int    `json:"node_count"`
+	NodeRunCount    int    `json:"node_run_count"`
+	FailedNodeCount int    `json:"failed_node_count"`
+	IdleTimeoutSec  int    `json:"idle_timeout_sec"`
+	TimeoutSec      int    `json:"timeout_sec"`
+	ExitCode        int    `json:"exit_code"`
 }
 
 func ParseStreamLine(line string) (*StreamEvent, StreamLineKind, error) {
@@ -243,70 +245,74 @@ func ParseStreamLine(line string) (*StreamEvent, StreamLineKind, error) {
 		event.Result = &agentResult
 	case "pipeline_event":
 		var payload struct {
-			Type               string `json:"type"`
-			Event              string `json:"event"`
-			Version            string `json:"version"`
-			StageID            string `json:"stage_id"`
-			TaskID             string `json:"task_id"`
-			SessionID          string `json:"session_id"`
-			Status             string `json:"status"`
-			Mode               string `json:"mode"`
-			Model              string `json:"model"`
-			Verbosity          string `json:"verbosity"`
-			Workspace          string `json:"workspace"`
-			OnError            string `json:"on_error"`
-			PromptSource       string `json:"prompt_source"`
-			PromptFile         string `json:"prompt_file"`
-			Signal             string `json:"signal"`
-			StartedAt          string `json:"started_at"`
-			FinishedAt         string `json:"finished_at"`
-			ErrorMessage       string `json:"error_message"`
-			Reason             string `json:"reason"`
-			StageCount         int    `json:"stage_count"`
-			CompletedStages    int    `json:"completed_stages"`
-			TaskCount          int    `json:"task_count"`
-			FailedTaskCount    int    `json:"failed_task_count"`
-			CompletedTasks     int    `json:"completed_tasks"`
-			FailedTasks        int    `json:"failed_tasks"`
-			MaxParallel        int    `json:"max_parallel"`
-			IdleTimeoutSec     int    `json:"idle_timeout_sec"`
-			TaskIdleTimeoutSec int    `json:"task_idle_timeout_sec"`
-			ExitCode           int    `json:"exit_code"`
-			DurationMS         int64  `json:"duration_ms"`
+			Type            string `json:"type"`
+			Event           string `json:"event"`
+			Version         string `json:"version"`
+			NodeID          string `json:"node_id"`
+			NodeRunID       string `json:"node_run_id"`
+			SessionID       string `json:"session_id"`
+			Status          string `json:"status"`
+			Kind            string `json:"kind"`
+			Model           string `json:"model"`
+			PromptSource    string `json:"prompt_source"`
+			PromptFile      string `json:"prompt_file"`
+			Cmd             string `json:"cmd"`
+			CWD             string `json:"cwd"`
+			EntryNode       string `json:"entry_node"`
+			TerminalNode    string `json:"terminal_node"`
+			TerminalStatus  string `json:"terminal_status"`
+			FromNode        string `json:"from_node"`
+			ToNode          string `json:"to_node"`
+			When            string `json:"when"`
+			Reason          string `json:"reason"`
+			ErrorMessage    string `json:"error_message"`
+			StartedAt       string `json:"started_at"`
+			FinishedAt      string `json:"finished_at"`
+			DurationMS      int64  `json:"duration_ms"`
+			Iteration       int    `json:"iteration"`
+			Attempt         int    `json:"attempt"`
+			NodeCount       int    `json:"node_count"`
+			NodeRunCount    int    `json:"node_run_count"`
+			FailedNodeCount int    `json:"failed_node_count"`
+			IdleTimeoutSec  int    `json:"idle_timeout_sec"`
+			TimeoutSec      int    `json:"timeout_sec"`
+			ExitCode        int    `json:"exit_code"`
 		}
 		if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 			return nil, StreamLineInvalidJSON, fmt.Errorf("decode pipeline event: %w", err)
 		}
 		event.Pipeline = &PipelineEvent{
-			Event:              payload.Event,
-			Version:            payload.Version,
-			StageID:            payload.StageID,
-			TaskID:             payload.TaskID,
-			SessionID:          payload.SessionID,
-			Status:             payload.Status,
-			Mode:               payload.Mode,
-			Model:              payload.Model,
-			Verbosity:          payload.Verbosity,
-			Workspace:          payload.Workspace,
-			OnError:            payload.OnError,
-			PromptSource:       payload.PromptSource,
-			PromptFile:         payload.PromptFile,
-			Signal:             payload.Signal,
-			StartedAt:          payload.StartedAt,
-			FinishedAt:         payload.FinishedAt,
-			ErrorMessage:       payload.ErrorMessage,
-			Reason:             payload.Reason,
-			StageCount:         payload.StageCount,
-			CompletedStages:    payload.CompletedStages,
-			TaskCount:          payload.TaskCount,
-			FailedTaskCount:    payload.FailedTaskCount,
-			CompletedTasks:     payload.CompletedTasks,
-			FailedTasks:        payload.FailedTasks,
-			MaxParallel:        payload.MaxParallel,
-			IdleTimeoutSec:     payload.IdleTimeoutSec,
-			TaskIdleTimeoutSec: payload.TaskIdleTimeoutSec,
-			ExitCode:           payload.ExitCode,
-			DurationMS:         payload.DurationMS,
+			Event:           payload.Event,
+			Version:         payload.Version,
+			NodeID:          payload.NodeID,
+			NodeRunID:       payload.NodeRunID,
+			SessionID:       payload.SessionID,
+			Status:          payload.Status,
+			Kind:            payload.Kind,
+			Model:           payload.Model,
+			PromptSource:    payload.PromptSource,
+			PromptFile:      payload.PromptFile,
+			Cmd:             payload.Cmd,
+			CWD:             payload.CWD,
+			EntryNode:       payload.EntryNode,
+			TerminalNode:    payload.TerminalNode,
+			TerminalStatus:  payload.TerminalStatus,
+			FromNode:        payload.FromNode,
+			ToNode:          payload.ToNode,
+			When:            payload.When,
+			Reason:          payload.Reason,
+			ErrorMessage:    payload.ErrorMessage,
+			StartedAt:       payload.StartedAt,
+			FinishedAt:      payload.FinishedAt,
+			DurationMS:      payload.DurationMS,
+			Iteration:       payload.Iteration,
+			Attempt:         payload.Attempt,
+			NodeCount:       payload.NodeCount,
+			NodeRunCount:    payload.NodeRunCount,
+			FailedNodeCount: payload.FailedNodeCount,
+			IdleTimeoutSec:  payload.IdleTimeoutSec,
+			TimeoutSec:      payload.TimeoutSec,
+			ExitCode:        payload.ExitCode,
 		}
 	}
 

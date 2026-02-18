@@ -111,6 +111,7 @@ type progressTUIModel struct {
 	toolTaskByKey          map[string]taskRef
 	toolUseIDByToolKey     map[string]string
 	pendingOutcomeBySessID map[string]taskOutcome
+	transitionLines        []string
 	nonJSONLogCount        int
 
 	finalRecord *stats.RunRecord
@@ -175,6 +176,7 @@ func newProgressTUIModel(pipelineHint bool, cancelRun context.CancelFunc) progre
 		toolTaskByKey:          map[string]taskRef{},
 		toolUseIDByToolKey:     map[string]string{},
 		pendingOutcomeBySessID: map[string]taskOutcome{},
+		transitionLines:        make([]string, 0, 16),
 		cancelRun:              cancelRun,
 	}
 
@@ -232,7 +234,7 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if strings.TrimSpace(m.planStatus) == "" {
 				m.planStatus = normalizeStatus(typed.Record.Pipeline.Status, "success")
 				if m.stageCount == 0 {
-					m.stageCount = typed.Record.Pipeline.StageCount
+					m.stageCount = len(m.stageOrder)
 				}
 			}
 		}
@@ -263,6 +265,11 @@ func (m progressTUIModel) View() string {
 	}
 
 	lines = append(lines, m.renderTree()...)
+	if len(m.transitionLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "Transitions")
+		lines = append(lines, m.transitionLines...)
+	}
 
 	if m.nonJSONLogCount > 0 {
 		lines = append(lines, "")
@@ -327,37 +334,26 @@ func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
 	eventName := strings.ToLower(strings.TrimSpace(event.Event))
 	switch eventName {
 	case "plan_start":
-		if event.StageCount > 0 {
-			m.stageCount = event.StageCount
+		if event.NodeCount > 0 {
+			m.stageCount = event.NodeCount
 		}
-	case "stage_start":
-		stage := m.ensureStage(event.StageID)
-		stage.Mode = strings.TrimSpace(event.Mode)
+	case "node_start":
+		stage := m.ensureStage(event.NodeID)
+		stage.Mode = strings.TrimSpace(event.Kind)
 		stage.Status = "running"
-		if event.TaskCount > 0 {
-			stage.TaskCount = event.TaskCount
-		}
-	case "task_start":
-		task := m.ensureTask(event.StageID, event.TaskID)
+		task := m.ensureTask(event.NodeID, event.NodeRunID)
 		task.Started = true
 		task.Status = "running"
 		if strings.TrimSpace(event.Model) != "" {
 			task.Model = strings.TrimSpace(event.Model)
 		}
-		if strings.TrimSpace(event.Verbosity) != "" {
-			task.Verbosity = strings.TrimSpace(event.Verbosity)
+		if strings.TrimSpace(event.CWD) != "" {
+			task.Workspace = strings.TrimSpace(event.CWD)
 		}
-		if strings.TrimSpace(event.Workspace) != "" {
-			task.Workspace = strings.TrimSpace(event.Workspace)
-		}
-		stage := m.ensureStage(event.StageID)
-		if event.TaskCount > stage.TaskCount {
-			stage.TaskCount = event.TaskCount
-		}
-	case "task_session_bind":
+	case "node_session_bind":
 		sessionID := strings.TrimSpace(event.SessionID)
-		stageID := strings.TrimSpace(event.StageID)
-		taskID := strings.TrimSpace(event.TaskID)
+		stageID := strings.TrimSpace(event.NodeID)
+		taskID := strings.TrimSpace(event.NodeRunID)
 		if sessionID == "" || stageID == "" || taskID == "" {
 			return
 		}
@@ -368,8 +364,8 @@ func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
 			TaskID:  taskID,
 		}
 		m.applyPendingOutcome(sessionID, task)
-	case "task_timeout":
-		task := m.ensureTask(event.StageID, event.TaskID)
+	case "node_timeout":
+		task := m.ensureTask(event.NodeID, event.NodeRunID)
 		task.Started = true
 		reason := strings.TrimSpace(event.Reason)
 		if reason == "" && event.IdleTimeoutSec > 0 {
@@ -378,19 +374,16 @@ func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
 		if reason != "" {
 			task.ErrorText = reason
 		}
-	case "task_finish":
-		task := m.ensureTask(event.StageID, event.TaskID)
+	case "node_finish":
+		task := m.ensureTask(event.NodeID, event.NodeRunID)
 		task.Started = true
 		task.Done = true
 		task.Status = normalizeStatus(event.Status, "success")
 		if strings.TrimSpace(event.Model) != "" {
 			task.Model = strings.TrimSpace(event.Model)
 		}
-		if strings.TrimSpace(event.Verbosity) != "" {
-			task.Verbosity = strings.TrimSpace(event.Verbosity)
-		}
-		if strings.TrimSpace(event.Workspace) != "" {
-			task.Workspace = strings.TrimSpace(event.Workspace)
+		if strings.TrimSpace(event.CWD) != "" {
+			task.Workspace = strings.TrimSpace(event.CWD)
 		}
 		if event.DurationMS > 0 {
 			task.DurationMS = event.DurationMS
@@ -400,20 +393,21 @@ func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
 		}
 		task.ActiveSteps = map[string]activeStep{}
 		task.StepOrder = task.StepOrder[:0]
-	case "stage_finish":
-		stage := m.ensureStage(event.StageID)
-		stage.Status = normalizeStatus(event.Status, "success")
-		stage.CompletedTasks = event.CompletedTasks
-		stage.FailedTasks = event.FailedTasks
-		stage.DurationMS = event.DurationMS
-		if event.TaskCount > 0 {
-			stage.TaskCount = event.TaskCount
-		}
 	case "plan_finish":
 		m.planStatus = normalizeStatus(event.Status, "success")
-		if event.StageCount > 0 {
-			m.stageCount = event.StageCount
+		m.stageCount = len(m.stageOrder)
+	case "transition_taken":
+		fromNode := strings.TrimSpace(event.FromNode)
+		toNode := strings.TrimSpace(event.ToNode)
+		when := strings.TrimSpace(event.When)
+		if fromNode == "" || toNode == "" {
+			return
 		}
+		line := fmt.Sprintf("%s -> %s", fromNode, toNode)
+		if when != "" {
+			line = line + " when " + when
+		}
+		m.transitionLines = append(m.transitionLines, line)
 	}
 }
 
@@ -784,23 +778,23 @@ func (m *progressTUIModel) renderTree() []string {
 
 func (m *progressTUIModel) renderPipelineStatsTable() []string {
 	headers := runStatsTableHeaders()
-	if m.finalRecord == nil || m.finalRecord.Pipeline == nil || len(m.finalRecord.Pipeline.Tasks) == 0 {
+	if m.finalRecord == nil || m.finalRecord.Pipeline == nil || len(m.finalRecord.Pipeline.NodeRuns) == 0 {
 		return renderTextTable(headers, nil)
 	}
 
-	rows := make([][]string, 0, len(m.finalRecord.Pipeline.Tasks))
-	for _, task := range m.finalRecord.Pipeline.Tasks {
-		liveTask := m.lookupTask(task.StageID, task.TaskID)
+	rows := make([][]string, 0, len(m.finalRecord.Pipeline.NodeRuns))
+	for _, nodeRun := range m.finalRecord.Pipeline.NodeRuns {
+		liveTask := m.lookupTask(nodeRun.NodeID, nodeRun.NodeRunID)
 
 		inputTokens := int64(0)
 		cacheCreateTokens := int64(0)
 		cacheRead := int64(0)
 		outputTokens := int64(0)
-		if task.Normalized != nil {
-			inputTokens = task.Normalized.InputTokens
-			cacheCreateTokens = task.Normalized.CacheCreationInputTokens
-			cacheRead = task.Normalized.CacheReadInputTokens
-			outputTokens = task.Normalized.OutputTokens
+		if nodeRun.Normalized != nil {
+			inputTokens = nodeRun.Normalized.InputTokens
+			cacheCreateTokens = nodeRun.Normalized.CacheCreationInputTokens
+			cacheRead = nodeRun.Normalized.CacheReadInputTokens
+			outputTokens = nodeRun.Normalized.OutputTokens
 		}
 		totalTokens := inputTokens + cacheCreateTokens + cacheRead + outputTokens
 		if liveTask != nil {
@@ -813,8 +807,8 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 		}
 
 		rows = append(rows, []string{
-			formatStepName(task.StageID, task.TaskID),
-			normalizeStatus(task.Status, "unknown"),
+			formatStepName(nodeRun.NodeID, nodeRun.NodeRunID),
+			normalizeStatus(nodeRun.Status, "unknown"),
 			fmt.Sprintf("%d", inputTokens),
 			fmt.Sprintf("%d", cacheCreateTokens),
 			fmt.Sprintf("%d", cacheRead),

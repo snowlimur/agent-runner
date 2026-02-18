@@ -1,49 +1,44 @@
 # Backend Codemap
 
-Updated: 2026-02-17
+Updated: 2026-02-18
 
 ## Go CLI (agent-cli)
 
 ### Entry Point
 
-`main.go` — Dispatches to `run` or `stats` subcommand.
+`main.go` - Dispatches to `run` or `stats` subcommand.
 
 ### Package: cli
 
 Implements the `run` and `stats` commands.
 
 **run command** (`run.go`):
-1. Parses flags: `--json`, `--model`, `--file`, `--pipeline`
+1. Parses flags: `--json`, `--model`, `--file`, `--pipeline`, `--var`
 2. Loads `.agent-cli/config.toml` via `config.Load()`
 3. Calls `runner.RunDockerStreaming()` with stream hooks
-4. Stream hooks parse each stdout line as JSON, update `ProgressPrinter`, collect usage metrics
-5. Extracts final result (single prompt) or pipeline result from stream
+4. Stream hooks parse stdout JSON lines, feed progress TUI, and accumulate metrics
+5. Extracts final `result` (single prompt) or `pipeline_result` (pipeline mode)
 6. Persists `RunRecord` + artifacts to `.agent-cli/runs/<timestamp>-<id>/`
-7. Prints summary or raw JSON
+7. Prints TUI summary or raw JSON
+
+**Pipeline mode specifics (v2):**
+- consumes `pipeline_event` node-level events (`node_start`, `node_session_bind`, `node_finish`, `transition_taken`, ...)
+- binds `session_id -> node_run_id` for usage attribution
+- enriches `pipeline.node_runs[].normalized` from stream `result` events
 
 **stats command** (`stats.go`):
 - Aggregates all run records from `.agent-cli/runs/`
 - Outputs table or JSON with token counts, costs, durations, and per-model totals
-
-**progress printer** (`progress.go`):
-- Formats real-time progress lines: `HH:MM:SS [label] message`
-- Tracks tool lifecycle (start/done/output), todo transitions, pipeline task bindings
-- Emits pipeline timeout/error diagnostics (`task_timeout`, failed `task_finish`) with stage/task prefixes
-- Pipeline mode prefixes lines with `[stage_id/task_id]`
 
 ### Package: config
 
 Loads and validates `.agent-cli/config.toml` using a hand-written TOML parser.
 
 **Sections:**
-- `[docker]` — image, model (sonnet|opus), enable_dind, run_idle_timeout_sec, pipeline_task_idle_timeout_sec
-- `[auth]` — github_token, claude_token
-- `[workspace]` — source_workspace_dir (absolute path)
-- `[git]` — user_name, user_email
-
-**Derived paths:**
-- `ConfigPath()` → `<cwd>/.agent-cli/config.toml`
-- `RunsDir()` → `<cwd>/.agent-cli/runs`
+- `[docker]` - image, model (sonnet|opus), mode, dind_storage_driver, run_idle_timeout_sec, pipeline_task_idle_timeout_sec
+- `[auth]` - github_token, claude_token
+- `[workspace]` - source_workspace_dir (absolute path)
+- `[git]` - user_name, user_email
 
 ### Package: result
 
@@ -51,75 +46,58 @@ Parses Claude Code streaming JSON output.
 
 **Stream event types:** `system`, `assistant`, `user`, `pipeline_event`, `result`
 
-**Key types:**
-- `StreamEvent` — Union envelope for all event types
-- `AgentResult` — Final result with usage, cost, model usage breakdown
-- `NormalizedMetrics` — Flattened token/cost metrics with per-model breakdown
-- `ParsedResult` — Raw JSON + parsed agent result + normalized metrics
+**Pipeline v2 parsed fields:**
+- node-level ids: `node_id`, `node_run_id`, `session_id`
+- transition info: `from_node`, `to_node`, `when`
+- plan summary: `entry_node`, `terminal_node`, `terminal_status`, `node_run_count`, `failed_node_count`, `exit_code`
 
 ### Package: runner
 
 Manages Docker container lifecycle using the Docker Engine API.
 
-**Flow:** cleanup stale → pull image → create → start → stream logs → wait → cleanup
-
-**Features:**
-- Stale container cleanup by CWD hash label
-- Host network mode (bridge for DinD)
-- Read-only source workspace bind mount
-- Graceful interrupt handling with signal-aware cleanup
-- Log demuxing (Docker multiplexed stdout/stderr)
-- Run-level idle timeout based on last stdout/stderr activity
+**Flow:** cleanup stale -> pull image -> create -> start -> stream logs -> wait -> cleanup
 
 ### Package: stats
 
 Persists and aggregates run records.
 
 **Storage:** `.agent-cli/runs/<YYYYMMDDTHHMMSS>-<hex_id>/`
-- `stats.json` — Full run record (without prompt payload/metadata)
-- `output.ndjson` — Valid JSON object logs (NDJSON)
-- `output.log` — Non-JSON-object lines (stdout first, then stderr)
-
-**Aggregation:** Sums across all runs — tokens, cost, duration, and per-model breakdowns.
+- `stats.json` - Full run record
+- `output.ndjson` - Valid JSON object logs (NDJSON)
+- `output.log` - Non-JSON-object lines (stdout first, then stderr)
 
 ## TypeScript Entrypoint (images/entrypoint)
 
 ### Entry Point
 
-`entrypoint.ts` → `main.ts:runEntrypoint()`
+`entrypoint.ts` -> `main.ts:runEntrypoint()`
 
 ### Startup Sequence
 
-1. Parse CLI args (commander): `--model`, `--pipeline`, `--debug`, `[taskArgs...]`
-2. Copy read-only source mount → writable `/workspace`
-3. Authenticate GitHub CLI + configure git
-4. Optionally start Docker-in-Docker daemon
-5. Resolve execution mode:
-   - **Pipeline mode:** Parse YAML plan → execute stages/tasks
-   - **Prompt mode:** Run single `claude` process
-   - **Interactive mode:** Launch `claude` with no prompt
-
-### Pipeline Executor (`pipeline-executor.ts`)
-
-Executes a validated `PipelinePlan`:
-- Iterates stages sequentially
-- Each stage runs tasks sequentially or in parallel (worker pool)
-- Emits structured `pipeline_event` JSON on stdout for CLI parsing
-- Prepares isolated workspaces per task (shared / worktree / snapshot_ro)
-- Binds Claude sessions to tasks via `task_session_bind` events
+1. Parse CLI args (`--model`, `--pipeline`, `--debug`, `[taskArgs...]`)
+2. Copy source mount to writable `/workspace`
+3. Configure GitHub auth + git identity
+4. Optionally start DinD
+5. Resolve mode:
+   - **Pipeline mode (v2):** parse graph plan and execute state machine
+   - **Prompt mode:** run single Claude process
+   - **Interactive mode:** run Claude interactive
 
 ### Pipeline Plan Parser (`pipeline-plan.ts`)
 
-Validates YAML pipeline plans:
-- Version check (`v1`)
-- Cascading defaults: plan → stage → task (model, verbosity, on_error, workspace, task_idle_timeout_sec)
-- Prompt resolution: inline `prompt` or `prompt_file` (relative to /workspace)
-- Safety: parallel tasks with shared workspace must declare `read_only` or `allow_shared_writes`
+Validates YAML v2 graph DSL:
+- `version: v2`, `entry`, `nodes`
+- executable nodes (`run + transitions`) vs terminal nodes (`terminal_status + exit_code`)
+- node kinds: `agent` and `command`
+- compile-time validation of `transitions[].when` expressions
+- `decision.schema_file` loading for `kind: agent`
 
-### DinD Module (`dind.ts`)
+### Pipeline Executor (`pipeline-executor.ts`)
 
-Optional Docker-in-Docker support:
-- Launches `dockerd` via `sudo` with configurable storage driver
-- Falls back from overlay2 → vfs
-- Health-checks via `docker info`
-- Graceful shutdown with SIGTERM → wait → SIGKILL
+Executes the plan as a state machine:
+- starts from `entry` and follows first matching transition
+- enforces `max_iterations` and `max_same_node_hits`
+- emits node-level `pipeline_event` stream
+- always runs agent nodes with `--verbose --output-format stream-json`
+- parses final `type=result` payload into decision JSON and validates schema
+- emits final `pipeline_result` with `node_runs[]`

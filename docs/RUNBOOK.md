@@ -83,10 +83,15 @@ agent-cli attempts a best-effort image pull before each run. If the registry is 
 
 `agent-cli` enforces idle-based timeouts:
 - `docker.run_idle_timeout_sec` (default `7200`) for the whole run
-- `docker.pipeline_task_idle_timeout_sec` (default `1800`) for pipeline tasks
+- `docker.pipeline_task_idle_timeout_sec` (default `1800`) as fallback for pipeline nodes
 
-Pipeline YAML can override per-task idle timeout via `task_idle_timeout_sec` on defaults/stage/task.
-Idle timeout is measured from the last task stdout/stderr activity and resets on each new output chunk.
+Pipeline v2 can override node timeouts with:
+- `defaults.agent_idle_timeout_sec`
+- `defaults.command_timeout_sec`
+- `nodes.<id>.run.idle_timeout_sec` (`kind: agent`)
+- `nodes.<id>.run.timeout_sec` (`kind: command`)
+
+Idle timeout is measured from the last stdout/stderr activity and resets on each new output chunk.
 
 ## Docker-in-Docker
 
@@ -135,14 +140,14 @@ Check that the YAML plan file is valid and references existing prompt files. Rev
 
 ### Pipeline template variable errors (`--var`)
 
-Inline `tasks[].prompt` can contain placeholders like `{{A_VAR}}`, supplied via:
+Inline `nodes.<id>.run.prompt` can contain placeholders like `{{A_VAR}}`, supplied via:
 
 ```bash
 agent-cli run --pipeline plan.yml --var A_VAR=value --var B_VAR=value
 ```
 
 Failures are explicit:
-- `Missing template vars for <stage>/<task>: ...` when a placeholder has no value
+- `Missing template vars for <node_id>: ...` when a placeholder has no value
 - `Unused template vars: ...` when a passed `--var` key is not used
 - argument errors for invalid key format (must be `UPPER_SNAKE`) or duplicate key
 
@@ -160,10 +165,10 @@ Increase `docker.run_idle_timeout_sec` in `.agent-cli/config.toml` if the run is
 
 ### Pipeline task idle timeout
 
-When a pipeline task stops producing output longer than the configured idle timeout:
-- entrypoint emits `pipeline_event` `task_timeout`
-- task finishes with `status=error` and timeout message
-- `agent-cli` returns a detailed error with `stage/task`
+When a pipeline node stops producing output longer than the configured idle timeout:
+- entrypoint emits `pipeline_event` `node_timeout`
+- node finishes with `status=error` and timeout message
+- `agent-cli` returns a detailed error with `node_id/node_run_id`
 
 ### Interrupted run
 

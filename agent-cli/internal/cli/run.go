@@ -111,9 +111,9 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	streamMetrics := result.NormalizedMetrics{
 		ByModel: map[string]result.ModelMetric{},
 	}
-	sessionTaskBindings := map[string]pipelineTaskRef{}
-	taskUsageByKey := map[string]*stats.PipelineTaskNormalized{}
-	taskUsagePendingBySession := map[string]*stats.PipelineTaskNormalized{}
+	sessionTaskBindings := map[string]pipelineNodeRunRef{}
+	taskUsageByKey := map[string]*stats.PipelineNodeRunNormalized{}
+	taskUsagePendingBySession := map[string]*stats.PipelineNodeRunNormalized{}
 	taskUsageSeen := map[string]bool{}
 
 	var progressUI *ProgressTUI
@@ -174,7 +174,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 			if event.Result != nil {
 				mergeNormalizedMetrics(&streamMetrics, result.ExtractMetrics(*event.Result))
 				if isPipelineRun {
-					mergePipelineTaskUsageForResult(
+					mergePipelineNodeRunUsageForResult(
 						*event.Result,
 						sessionTaskBindings,
 						taskUsageByKey,
@@ -185,7 +185,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 			}
 
 			if isPipelineRun {
-				bindPipelineTaskSession(
+				bindPipelineNodeRunSession(
 					event,
 					sessionTaskBindings,
 					taskUsageByKey,
@@ -217,7 +217,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		var pipelineRecord *stats.PipelineRunRecord
 		pipelineRecord, pipelineRaw, parseErr = extractPipelineResultFromStream(stdoutLines, stderrLines)
 		if parseErr == nil {
-			applyPipelineTaskUsage(pipelineRecord, taskUsageByKey, taskUsageSeen)
+			applyPipelineNodeRunUsage(pipelineRecord, taskUsageByKey, taskUsageSeen)
 			record.Pipeline = pipelineRecord
 		}
 	} else {
@@ -440,15 +440,18 @@ func cloneTemplateVars(input map[string]string) map[string]string {
 }
 
 type pipelineResultEvent struct {
-	Type            string                     `json:"type"`
-	Version         string                     `json:"version"`
-	Status          string                     `json:"status"`
-	IsError         bool                       `json:"is_error"`
-	StageCount      int                        `json:"stage_count"`
-	CompletedStages int                        `json:"completed_stages"`
-	TaskCount       int                        `json:"task_count"`
-	FailedTaskCount int                        `json:"failed_task_count"`
-	Tasks           []stats.PipelineTaskRecord `json:"tasks"`
+	Type            string                        `json:"type"`
+	Version         string                        `json:"version"`
+	Status          string                        `json:"status"`
+	IsError         bool                          `json:"is_error"`
+	EntryNode       string                        `json:"entry_node"`
+	TerminalNode    string                        `json:"terminal_node"`
+	TerminalStatus  string                        `json:"terminal_status"`
+	ExitCode        int                           `json:"exit_code"`
+	Iterations      int                           `json:"iterations"`
+	NodeRunCount    int                           `json:"node_run_count"`
+	FailedNodeCount int                           `json:"failed_node_count"`
+	NodeRuns        []stats.PipelineNodeRunRecord `json:"node_runs"`
 }
 
 func extractPipelineResultFromStream(
@@ -473,11 +476,14 @@ func extractPipelineResultFromStream(
 			Version:         event.Version,
 			Status:          event.Status,
 			IsError:         event.IsError,
-			StageCount:      event.StageCount,
-			CompletedStages: event.CompletedStages,
-			TaskCount:       event.TaskCount,
-			FailedTaskCount: event.FailedTaskCount,
-			Tasks:           event.Tasks,
+			EntryNode:       event.EntryNode,
+			TerminalNode:    event.TerminalNode,
+			TerminalStatus:  event.TerminalStatus,
+			ExitCode:        event.ExitCode,
+			Iterations:      event.Iterations,
+			NodeRunCount:    event.NodeRunCount,
+			FailedNodeCount: event.FailedNodeCount,
+			NodeRuns:        event.NodeRuns,
 		}, line, nil
 	}
 
@@ -520,19 +526,19 @@ func pipelineFailureMessage(pipeline *stats.PipelineRunRecord) string {
 		return "pipeline returned is_error=true"
 	}
 
-	for _, task := range pipeline.Tasks {
-		if !strings.EqualFold(strings.TrimSpace(task.Status), "error") {
+	for _, nodeRun := range pipeline.NodeRuns {
+		if !strings.EqualFold(strings.TrimSpace(nodeRun.Status), "error") {
 			continue
 		}
 
-		detail := strings.TrimSpace(task.ErrorMessage)
+		detail := strings.TrimSpace(nodeRun.ErrorMessage)
 		if detail == "" {
-			detail = fmt.Sprintf("task exited with code %d", task.ExitCode)
+			detail = fmt.Sprintf("node exited with code %d", nodeRun.ExitCode)
 		}
-		stageID := strings.TrimSpace(task.StageID)
-		taskID := strings.TrimSpace(task.TaskID)
-		if stageID != "" && taskID != "" {
-			return fmt.Sprintf("pipeline failed at %s/%s: %s", stageID, taskID, detail)
+		nodeID := strings.TrimSpace(nodeRun.NodeID)
+		nodeRunID := strings.TrimSpace(nodeRun.NodeRunID)
+		if nodeID != "" && nodeRunID != "" {
+			return fmt.Sprintf("pipeline failed at %s/%s: %s", nodeID, nodeRunID, detail)
 		}
 		return "pipeline failed: " + detail
 	}
@@ -545,11 +551,11 @@ func pipelineFailureIsTimeout(pipeline *stats.PipelineRunRecord) bool {
 		return false
 	}
 
-	for _, task := range pipeline.Tasks {
-		if !strings.EqualFold(strings.TrimSpace(task.Status), "error") {
+	for _, nodeRun := range pipeline.NodeRuns {
+		if !strings.EqualFold(strings.TrimSpace(nodeRun.Status), "error") {
 			continue
 		}
-		message := strings.ToLower(strings.TrimSpace(task.ErrorMessage))
+		message := strings.ToLower(strings.TrimSpace(nodeRun.ErrorMessage))
 		if strings.Contains(message, "idle timeout") || strings.Contains(message, "timed out") {
 			return true
 		}
@@ -608,35 +614,35 @@ func formatStepName(stageID string, taskID string) string {
 	}
 }
 
-type pipelineTaskRef struct {
-	StageID string
-	TaskID  string
+type pipelineNodeRunRef struct {
+	NodeID    string
+	NodeRunID string
 }
 
-func bindPipelineTaskSession(
+func bindPipelineNodeRunSession(
 	event *result.StreamEvent,
-	sessionTaskBindings map[string]pipelineTaskRef,
-	taskUsageByKey map[string]*stats.PipelineTaskNormalized,
-	taskUsagePendingBySession map[string]*stats.PipelineTaskNormalized,
+	sessionTaskBindings map[string]pipelineNodeRunRef,
+	taskUsageByKey map[string]*stats.PipelineNodeRunNormalized,
+	taskUsagePendingBySession map[string]*stats.PipelineNodeRunNormalized,
 	taskUsageSeen map[string]bool,
 ) {
 	if event == nil || event.Pipeline == nil {
 		return
 	}
-	if !strings.EqualFold(strings.TrimSpace(event.Pipeline.Event), "task_session_bind") {
+	if !strings.EqualFold(strings.TrimSpace(event.Pipeline.Event), "node_session_bind") {
 		return
 	}
 
 	sessionID := strings.TrimSpace(event.Pipeline.SessionID)
-	stageID := strings.TrimSpace(event.Pipeline.StageID)
-	taskID := strings.TrimSpace(event.Pipeline.TaskID)
-	if sessionID == "" || stageID == "" || taskID == "" {
+	nodeID := strings.TrimSpace(event.Pipeline.NodeID)
+	nodeRunID := strings.TrimSpace(event.Pipeline.NodeRunID)
+	if sessionID == "" || nodeID == "" || nodeRunID == "" {
 		return
 	}
 
-	ref := pipelineTaskRef{
-		StageID: stageID,
-		TaskID:  taskID,
+	ref := pipelineNodeRunRef{
+		NodeID:    nodeID,
+		NodeRunID: nodeRunID,
 	}
 	sessionTaskBindings[sessionID] = ref
 
@@ -644,14 +650,14 @@ func bindPipelineTaskSession(
 	if pending == nil {
 		return
 	}
-	key := buildPipelineTaskKey(stageID, taskID)
+	key := buildPipelineNodeRunKey(nodeID, nodeRunID)
 	usage := taskUsageByKey[key]
 	if usage == nil {
-		value := newPipelineTaskNormalized()
+		value := newPipelineNodeRunNormalized()
 		usage = &value
 		taskUsageByKey[key] = usage
 	}
-	mergePipelineTaskNormalized(usage, *pending)
+	mergePipelineNodeRunNormalized(usage, *pending)
 	taskUsageSeen[key] = true
 	delete(taskUsagePendingBySession, sessionID)
 }
@@ -684,11 +690,11 @@ func mergeNormalizedMetrics(target *result.NormalizedMetrics, delta result.Norma
 	}
 }
 
-func mergePipelineTaskUsageForResult(
+func mergePipelineNodeRunUsageForResult(
 	agent result.AgentResult,
-	sessionTaskBindings map[string]pipelineTaskRef,
-	taskUsageByKey map[string]*stats.PipelineTaskNormalized,
-	taskUsagePendingBySession map[string]*stats.PipelineTaskNormalized,
+	sessionTaskBindings map[string]pipelineNodeRunRef,
+	taskUsageByKey map[string]*stats.PipelineNodeRunNormalized,
+	taskUsagePendingBySession map[string]*stats.PipelineNodeRunNormalized,
 	taskUsageSeen map[string]bool,
 ) {
 	sessionID := strings.TrimSpace(agent.SessionID)
@@ -696,61 +702,61 @@ func mergePipelineTaskUsageForResult(
 		return
 	}
 
-	delta := extractPipelineTaskNormalized(agent)
+	delta := extractPipelineNodeRunNormalized(agent)
 
 	ref, bound := sessionTaskBindings[sessionID]
-	if !bound || strings.TrimSpace(ref.StageID) == "" || strings.TrimSpace(ref.TaskID) == "" {
+	if !bound || strings.TrimSpace(ref.NodeID) == "" || strings.TrimSpace(ref.NodeRunID) == "" {
 		pending := taskUsagePendingBySession[sessionID]
 		if pending == nil {
-			value := newPipelineTaskNormalized()
+			value := newPipelineNodeRunNormalized()
 			pending = &value
 			taskUsagePendingBySession[sessionID] = pending
 		}
-		mergePipelineTaskNormalized(pending, delta)
+		mergePipelineNodeRunNormalized(pending, delta)
 		return
 	}
 
-	key := buildPipelineTaskKey(ref.StageID, ref.TaskID)
+	key := buildPipelineNodeRunKey(ref.NodeID, ref.NodeRunID)
 	usage := taskUsageByKey[key]
 	if usage == nil {
-		value := newPipelineTaskNormalized()
+		value := newPipelineNodeRunNormalized()
 		usage = &value
 		taskUsageByKey[key] = usage
 	}
-	mergePipelineTaskNormalized(usage, delta)
+	mergePipelineNodeRunNormalized(usage, delta)
 	taskUsageSeen[key] = true
 }
 
-func applyPipelineTaskUsage(
+func applyPipelineNodeRunUsage(
 	pipeline *stats.PipelineRunRecord,
-	taskUsageByKey map[string]*stats.PipelineTaskNormalized,
+	taskUsageByKey map[string]*stats.PipelineNodeRunNormalized,
 	taskUsageSeen map[string]bool,
 ) {
 	if pipeline == nil {
 		return
 	}
 
-	for i := range pipeline.Tasks {
-		task := &pipeline.Tasks[i]
-		key := buildPipelineTaskKey(task.StageID, task.TaskID)
+	for i := range pipeline.NodeRuns {
+		nodeRun := &pipeline.NodeRuns[i]
+		key := buildPipelineNodeRunKey(nodeRun.NodeID, nodeRun.NodeRunID)
 		if !taskUsageSeen[key] {
-			task.Normalized = nil
+			nodeRun.Normalized = nil
 			continue
 		}
 
 		usage := taskUsageByKey[key]
 		if usage == nil {
-			value := newPipelineTaskNormalized()
-			task.Normalized = &value
+			value := newPipelineNodeRunNormalized()
+			nodeRun.Normalized = &value
 			continue
 		}
-		value := clonePipelineTaskNormalized(*usage)
-		task.Normalized = &value
+		value := clonePipelineNodeRunNormalized(*usage)
+		nodeRun.Normalized = &value
 	}
 }
 
-func extractPipelineTaskNormalized(agent result.AgentResult) stats.PipelineTaskNormalized {
-	normalized := newPipelineTaskNormalized()
+func extractPipelineNodeRunNormalized(agent result.AgentResult) stats.PipelineNodeRunNormalized {
+	normalized := newPipelineNodeRunNormalized()
 	normalized.InputTokens = agent.Usage.InputTokens
 	normalized.CacheCreationInputTokens = agent.Usage.CacheCreationInputTokens
 	normalized.CacheReadInputTokens = agent.Usage.CacheReadInputTokens
@@ -759,7 +765,7 @@ func extractPipelineTaskNormalized(agent result.AgentResult) stats.PipelineTaskN
 	normalized.WebSearchRequests = agent.Usage.ServerToolUse.WebSearchRequests
 
 	for modelName, usage := range agent.ModelUsage {
-		normalized.ByModel[modelName] = stats.PipelineTaskModelMetric{
+		normalized.ByModel[modelName] = stats.PipelineNodeRunModelMetric{
 			InputTokens:              usage.InputTokens,
 			OutputTokens:             usage.OutputTokens,
 			CacheReadInputTokens:     usage.CacheReadInputTokens,
@@ -771,7 +777,7 @@ func extractPipelineTaskNormalized(agent result.AgentResult) stats.PipelineTaskN
 	return normalized
 }
 
-func mergePipelineTaskNormalized(target *stats.PipelineTaskNormalized, delta stats.PipelineTaskNormalized) {
+func mergePipelineNodeRunNormalized(target *stats.PipelineNodeRunNormalized, delta stats.PipelineNodeRunNormalized) {
 	if target == nil {
 		return
 	}
@@ -784,7 +790,7 @@ func mergePipelineTaskNormalized(target *stats.PipelineTaskNormalized, delta sta
 	target.WebSearchRequests += delta.WebSearchRequests
 
 	if target.ByModel == nil {
-		target.ByModel = map[string]stats.PipelineTaskModelMetric{}
+		target.ByModel = map[string]stats.PipelineNodeRunModelMetric{}
 	}
 	for modelName, metric := range delta.ByModel {
 		current := target.ByModel[modelName]
@@ -798,15 +804,15 @@ func mergePipelineTaskNormalized(target *stats.PipelineTaskNormalized, delta sta
 	}
 }
 
-func clonePipelineTaskNormalized(source stats.PipelineTaskNormalized) stats.PipelineTaskNormalized {
-	cloned := stats.PipelineTaskNormalized{
+func clonePipelineNodeRunNormalized(source stats.PipelineNodeRunNormalized) stats.PipelineNodeRunNormalized {
+	cloned := stats.PipelineNodeRunNormalized{
 		InputTokens:              source.InputTokens,
 		CacheCreationInputTokens: source.CacheCreationInputTokens,
 		CacheReadInputTokens:     source.CacheReadInputTokens,
 		OutputTokens:             source.OutputTokens,
 		CostUSD:                  source.CostUSD,
 		WebSearchRequests:        source.WebSearchRequests,
-		ByModel:                  map[string]stats.PipelineTaskModelMetric{},
+		ByModel:                  map[string]stats.PipelineNodeRunModelMetric{},
 	}
 	for modelName, metric := range source.ByModel {
 		cloned.ByModel[modelName] = metric
@@ -814,12 +820,12 @@ func clonePipelineTaskNormalized(source stats.PipelineTaskNormalized) stats.Pipe
 	return cloned
 }
 
-func newPipelineTaskNormalized() stats.PipelineTaskNormalized {
-	return stats.PipelineTaskNormalized{
-		ByModel: map[string]stats.PipelineTaskModelMetric{},
+func newPipelineNodeRunNormalized() stats.PipelineNodeRunNormalized {
+	return stats.PipelineNodeRunNormalized{
+		ByModel: map[string]stats.PipelineNodeRunModelMetric{},
 	}
 }
 
-func buildPipelineTaskKey(stageID string, taskID string) string {
-	return strings.TrimSpace(stageID) + "\x00" + strings.TrimSpace(taskID)
+func buildPipelineNodeRunKey(nodeID string, nodeRunID string) string {
+	return strings.TrimSpace(nodeID) + "\x00" + strings.TrimSpace(nodeRunID)
 }

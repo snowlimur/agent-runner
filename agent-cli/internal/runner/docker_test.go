@@ -504,7 +504,8 @@ func TestRunDockerStreamingSuccessUsesSDKAndStreams(t *testing.T) {
 		!containsString(fake.createdConfig.Env, "SOURCE_WORKSPACE_DIR=/workspace-source") ||
 		!containsString(fake.createdConfig.Env, "GIT_USER_NAME=User") ||
 		!containsString(fake.createdConfig.Env, "GIT_USER_EMAIL=user@example.com") ||
-		!containsString(fake.createdConfig.Env, "PIPELINE_TASK_IDLE_TIMEOUT_SEC=1800") ||
+		!containsString(fake.createdConfig.Env, "PIPELINE_AGENT_IDLE_TIMEOUT_SEC=1800") ||
+		!containsString(fake.createdConfig.Env, "PIPELINE_COMMAND_TIMEOUT_SEC=1800") ||
 		!containsString(fake.createdConfig.Env, "FORCE_COLOR=1") {
 		t.Fatalf("unexpected env: %#v", fake.createdConfig.Env)
 	}
@@ -848,8 +849,11 @@ func TestRunDockerStreamingPipelineTaskIdleTimeoutEnvOverride(t *testing.T) {
 	if fake.createdConfig == nil {
 		t.Fatal("container config was not captured")
 	}
-	if !containsString(fake.createdConfig.Env, "PIPELINE_TASK_IDLE_TIMEOUT_SEC=99") {
-		t.Fatalf("expected PIPELINE_TASK_IDLE_TIMEOUT_SEC env, got %#v", fake.createdConfig.Env)
+	if !containsString(fake.createdConfig.Env, "PIPELINE_AGENT_IDLE_TIMEOUT_SEC=99") {
+		t.Fatalf("expected PIPELINE_AGENT_IDLE_TIMEOUT_SEC env, got %#v", fake.createdConfig.Env)
+	}
+	if !containsString(fake.createdConfig.Env, "PIPELINE_COMMAND_TIMEOUT_SEC=99") {
+		t.Fatalf("expected PIPELINE_COMMAND_TIMEOUT_SEC env, got %#v", fake.createdConfig.Env)
 	}
 }
 

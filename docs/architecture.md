@@ -1,44 +1,43 @@
 # Architecture Codemap
 
-Updated: 2026-02-17
+Updated: 2026-02-18
 
 ## Overview
 
-agent-runner is a CLI + container system for running Claude Code agents inside Docker containers. It supports single-prompt runs and multi-step YAML pipeline plans with parallel/sequential stage execution.
+agent-runner is a CLI + container system for running Claude Code agents inside Docker containers. It supports single-prompt runs and graph-driven pipeline plans (`pipeline v2`).
 
 ## Repository Layout
 
 ```
 agent-runner/
-├── agent-cli/              # Go CLI (host-side orchestrator)
-│   ├── main.go             # Entry point: run | stats | help
+├── agent-cli/
+│   ├── main.go
 │   └── internal/
-│       ├── cli/            # Command implementations + progress printer
-│       ├── config/         # TOML config loader (.agent-cli/config.toml)
-│       ├── result/         # Stream JSON parser + result types
-│       ├── runner/         # Docker container lifecycle (create/start/logs/wait/cleanup)
-│       └── stats/          # Run record persistence + aggregation
-├── images/                 # Docker image definitions
-│   ├── Dockerfile          # Base image (Node 20, Claude Code, Docker Engine, gh, task)
-│   ├── entrypoint/         # TypeScript entrypoint (runs inside container)
+│       ├── cli/
+│       ├── config/
+│       ├── result/
+│       ├── runner/
+│       └── stats/
+├── images/
+│   ├── Dockerfile
+│   ├── entrypoint/
 │   │   └── src/
-│   │       ├── entrypoint.ts       # Process entry
+│   │       ├── entrypoint.ts
 │   │       └── lib/
-│   │           ├── main.ts         # Workspace prep -> git auth -> DinD -> run
-│   │           ├── cli.ts          # Argument parsing (commander)
-│   │           ├── pipeline-plan.ts    # YAML plan loader + validator
-│   │           ├── pipeline-executor.ts # Stage/task execution engine
-│   │           ├── workspace-git.ts    # Source copy + git config
-│   │           ├── dind.ts         # Docker-in-Docker lifecycle
-│   │           ├── types.ts        # Shared type definitions
-│   │           ├── constants.ts    # Paths, defaults
-│   │           └── utils.ts        # Shell helpers, env readers
-│   ├── golang/             # Go language layer (Dockerfile + Claude config)
-│   └── rust/               # Rust language layer (Dockerfile + Claude config)
-├── tests/                  # Integration test workspaces
-│   ├── golang/             # Go test project with .agent-cli config
-│   └── rust/               # Rust test project
-└── Taskfile.yml            # Root task runner (includes cli, image, test)
+│   │           ├── main.ts
+│   │           ├── cli.ts
+│   │           ├── pipeline-plan.ts
+│   │           ├── condition-eval.ts
+│   │           ├── pipeline-executor.ts
+│   │           ├── workspace-git.ts
+│   │           ├── dind.ts
+│   │           ├── types.ts
+│   │           ├── constants.ts
+│   │           └── utils.ts
+│   ├── golang/
+│   └── rust/
+├── tests/
+└── Taskfile.yml
 ```
 
 ## Execution Flow
@@ -46,43 +45,29 @@ agent-runner/
 ```
 Host                                Container
 ─────                               ─────────
-agent-cli run <prompt>
+agent-cli run --pipeline plan.yml
   │
-  ├─ Load .agent-cli/config.toml
-  ├─ Build Docker run spec
-  ├─ Cleanup stale containers
-  ├─ Pull image (best-effort)
-  ├─ Create + Start container ──────► entrypoint.ts
-  ├─ Stream stdout/stderr             ├─ Copy source -> /workspace
-  │   ├─ Parse JSON events            ├─ Setup git + GitHub auth
-  │   ├─ Update progress printer      ├─ Start DinD (optional)
-  │   └─ Collect metrics              ├─ Resolve pipeline or prompt
-  ├─ Wait for container exit          ├─ Run claude process(es)
-  ├─ Save run record + artifacts      └─ Exit
+  ├─ Load config
+  ├─ Start Docker runner container ──────► entrypoint.ts
+  ├─ Stream stdout/stderr                ├─ Prepare /workspace
+  │   ├─ Parse stream JSON               ├─ Setup gh/git
+  │   ├─ Update TUI                      ├─ Parse pipeline v2 graph
+  │   └─ Attribute usage                 ├─ Execute state machine (nodes/transitions)
+  ├─ Extract pipeline_result             └─ Emit pipeline_event + pipeline_result
+  ├─ Persist run artifacts
   └─ Print summary
 ```
 
 ## Key Interfaces
 
-- `runner.dockerAPI` — Docker Engine client abstraction (create/start/logs/wait/stop/remove)
-- `result.StreamEvent` — Parsed stream event envelope (system | assistant | user | pipeline | result)
-- `stats.RunRecord` — Persisted run record with metrics, errors, and agent result
-- `PipelinePlan` — Validated pipeline plan (version, defaults, stages with tasks)
-
-## External Dependencies
-
-### Go CLI (agent-cli)
-- `github.com/docker/docker` — Docker Engine API client
-- `github.com/opencontainers/image-spec` — OCI image spec types
-
-### TypeScript Entrypoint (images/entrypoint)
-- `commander` — CLI argument parsing
-- `js-yaml` — YAML plan file parsing
+- `PipelinePlan (v2)` - graph DSL with executable and terminal nodes.
+- `pipeline_event` - node-level lifecycle events (`node_start`, `node_finish`, `transition_taken`, ...).
+- `pipeline_result` - final summary with terminal outcome and `node_runs[]`.
+- `stats.RunRecord` - persisted record enriched with normalized usage metrics.
 
 ## Build System
 
 Taskfile v3 (hierarchical):
-- Root `Taskfile.yml` includes `cli:`, `image:`, `test:`
-- `task install` builds CLI + all images
+- `task install` builds CLI + images
 - `task cli:test` runs Go unit tests
-- `task image:build:all` builds base, go, (rust) images
+- `task image:entrypoint:typecheck` validates TS entrypoint

@@ -437,7 +437,7 @@ func TestRunCommandPipelineJSONOutput(t *testing.T) {
 		t.Fatalf("write plan file: %v", err)
 	}
 
-	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":1,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"implement","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000}]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":1,"node_run_count":1,"failed_node_count":0,"node_runs":[{"node_id":"dev","node_run_id":"implement-1","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000,"error_message":""}]}`
 	lines := []string{
 		`{"type":"pipeline_event","event":"plan_start"}`,
 		pipelineResultLine,
@@ -484,8 +484,8 @@ func TestRunCommandPipelineJSONOutput(t *testing.T) {
 	if saved.Record.Pipeline == nil {
 		t.Fatal("expected pipeline data in record")
 	}
-	if saved.Record.Pipeline.TaskCount != 1 {
-		t.Fatalf("unexpected pipeline task count: %d", saved.Record.Pipeline.TaskCount)
+	if saved.Record.Pipeline.NodeRunCount != 1 {
+		t.Fatalf("unexpected pipeline node run count: %d", saved.Record.Pipeline.NodeRunCount)
 	}
 
 	if _, err := os.Stat(filepath.Join(saved.RunDir, "prompt.md")); !os.IsNotExist(err) {
@@ -506,7 +506,7 @@ func TestRunCommandPipelinePassesTemplateVarsToRunner(t *testing.T) {
 		t.Fatalf("write plan file: %v", err)
 	}
 
-	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":1,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"implement","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000}]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":1,"node_run_count":1,"failed_node_count":0,"node_runs":[{"node_id":"dev","node_run_id":"implement-1","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000,"error_message":""}]}`
 	lines := []string{
 		`{"type":"pipeline_event","event":"plan_start"}`,
 		pipelineResultLine,
@@ -563,9 +563,9 @@ func TestRunCommandPipelineFailureReturnsTaskErrorDetails(t *testing.T) {
 		t.Fatalf("write plan file: %v", err)
 	}
 
-	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"error","is_error":true,"stage_count":1,"completed_stages":1,"task_count":1,"failed_task_count":1,"tasks":[{"stage_id":"main","task_id":"print_version","status":"error","on_error":"fail_fast","workspace":"shared","model":"sonnet","verbosity":"vv","prompt_source":"prompt","exit_code":124,"started_at":"2026-02-17T17:25:31Z","finished_at":"2026-02-17T17:55:31Z","duration_ms":1800000,"error_message":"idle timeout after 30 seconds without task output"}]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"error","is_error":true,"entry_node":"main","terminal_node":"","terminal_status":"","exit_code":5,"iterations":1,"node_run_count":1,"failed_node_count":1,"node_runs":[{"node_id":"main","node_run_id":"print_version-1","kind":"agent","status":"error","model":"sonnet","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":124,"signal":"","timed_out":true,"started_at":"2026-02-17T17:25:31Z","finished_at":"2026-02-17T17:55:31Z","duration_ms":1800000,"error_message":"idle timeout after 30 seconds without task output"}]}`
 	lines := []string{
-		`{"type":"pipeline_event","event":"task_timeout","stage_id":"main","task_id":"print_version","idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`,
+		`{"type":"pipeline_event","event":"node_timeout","node_id":"main","node_run_id":"print_version-1","idle_timeout_sec":30,"reason":"idle timeout after 30 seconds without task output"}`,
 		pipelineResultLine,
 	}
 
@@ -593,7 +593,7 @@ func TestRunCommandPipelineFailureReturnsTaskErrorDetails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	expectedMessage := "pipeline failed at main/print_version: idle timeout after 30 seconds without task output"
+	expectedMessage := "pipeline failed at main/print_version-1: idle timeout after 30 seconds without task output"
 	if !strings.Contains(err.Error(), expectedMessage) {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -619,7 +619,7 @@ func TestRunCommandPipelineSummaryShowsTaskStatsTable(t *testing.T) {
 
 	resultLineA := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`
 	resultLineB := `{"type":"result","subtype":"success","is_error":false,"duration_ms":5,"duration_api_ms":6,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s2","total_cost_usd":0.05,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":1,"output_tokens":2,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u2"}`
-	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":2,"failed_task_count":0,"tasks":[]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":2,"node_run_count":2,"failed_node_count":0,"node_runs":[]}`
 	lines := []string{
 		`{"type":"pipeline_event","event":"plan_start"}`,
 		resultLineA,
@@ -681,12 +681,12 @@ func TestRunCommandPipelineTaskNormalizedIncludesCostWebSearchAndOutOfOrder(t *t
 
 	resultLineA := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.25,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-opus":{"inputTokens":10,"outputTokens":3,"cacheReadInputTokens":2,"cacheCreationInputTokens":1,"webSearchRequests":2,"costUSD":0.25}},"uuid":"u1"}`
 	resultLineB := `{"type":"result","subtype":"success","is_error":false,"duration_ms":5,"duration_api_ms":6,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s2","total_cost_usd":0.05,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":1,"output_tokens":2,"server_tool_use":{"web_search_requests":1,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-sonnet":{"inputTokens":4,"outputTokens":2,"cacheReadInputTokens":1,"cacheCreationInputTokens":0,"webSearchRequests":1,"costUSD":0.05}},"uuid":"u2"}`
-	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":2,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"task_a","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000},{"stage_id":"dev","task_id":"task_b","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000}]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":2,"node_run_count":2,"failed_node_count":0,"node_runs":[{"node_id":"dev","node_run_id":"task_a-1","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000,"error_message":""},{"node_id":"dev","node_run_id":"task_b-2","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000,"error_message":""}]}`
 	lines := []string{
 		resultLineB,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_a","session_id":"s1"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_a-1","session_id":"s1"}`,
 		resultLineA,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_b","session_id":"s2"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_b-2","session_id":"s2"}`,
 		pipelineResultLine,
 	}
 
@@ -724,7 +724,7 @@ func TestRunCommandPipelineTaskNormalizedIncludesCostWebSearchAndOutOfOrder(t *t
 		t.Fatal("expected pipeline record")
 	}
 
-	taskA := mustFindPipelineTask(t, pipeline, "dev", "task_a")
+	taskA := mustFindPipelineNodeRun(t, pipeline, "dev", "task_a-1")
 	if taskA.Normalized == nil {
 		t.Fatal("expected normalized metrics for task_a")
 	}
@@ -753,7 +753,7 @@ func TestRunCommandPipelineTaskNormalizedIncludesCostWebSearchAndOutOfOrder(t *t
 	}
 	assertFloatNear(t, modelA.CostUSD, 0.25, "task_a by_model cost_usd")
 
-	taskB := mustFindPipelineTask(t, pipeline, "dev", "task_b")
+	taskB := mustFindPipelineNodeRun(t, pipeline, "dev", "task_b-2")
 	if taskB.Normalized == nil {
 		t.Fatal("expected normalized metrics for task_b")
 	}
@@ -785,11 +785,11 @@ func TestRunCommandPipelineTaskNormalizedOmittedWithoutTaskResult(t *testing.T) 
 	}
 
 	resultLineA := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.25,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":2,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-opus":{"inputTokens":10,"outputTokens":3,"cacheReadInputTokens":2,"cacheCreationInputTokens":1,"webSearchRequests":2,"costUSD":0.25}},"uuid":"u1"}`
-	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":2,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"task_a","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000},{"stage_id":"dev","task_id":"task_b","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000}]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":2,"node_run_count":2,"failed_node_count":0,"node_runs":[{"node_id":"dev","node_run_id":"task_a-1","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000,"error_message":""},{"node_id":"dev","node_run_id":"task_b-2","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000,"error_message":""}]}`
 	lines := []string{
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_a","session_id":"s1"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_a-1","session_id":"s1"}`,
 		resultLineA,
-		`{"type":"pipeline_event","event":"task_session_bind","stage_id":"dev","task_id":"task_b","session_id":"s2"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_b-2","session_id":"s2"}`,
 		pipelineResultLine,
 	}
 
@@ -822,11 +822,11 @@ func TestRunCommandPipelineTaskNormalizedOmittedWithoutTaskResult(t *testing.T) 
 		t.Fatal("expected pipeline record")
 	}
 
-	taskA := mustFindPipelineTask(t, pipeline, "dev", "task_a")
+	taskA := mustFindPipelineNodeRun(t, pipeline, "dev", "task_a-1")
 	if taskA.Normalized == nil {
 		t.Fatal("expected normalized metrics for task_a")
 	}
-	taskB := mustFindPipelineTask(t, pipeline, "dev", "task_b")
+	taskB := mustFindPipelineNodeRun(t, pipeline, "dev", "task_b-2")
 	if taskB.Normalized != nil {
 		t.Fatal("expected normalized metrics to be omitted for task_b")
 	}
@@ -1043,24 +1043,24 @@ func TestRunCommandUsesConfigDockerModeAndDriver(t *testing.T) {
 	}
 }
 
-func mustFindPipelineTask(
+func mustFindPipelineNodeRun(
 	t *testing.T,
 	pipeline *stats.PipelineRunRecord,
-	stageID string,
-	taskID string,
-) *stats.PipelineTaskRecord {
+	nodeID string,
+	nodeRunID string,
+) *stats.PipelineNodeRunRecord {
 	t.Helper()
 
 	if pipeline == nil {
 		t.Fatal("pipeline record is nil")
 	}
-	for i := range pipeline.Tasks {
-		task := &pipeline.Tasks[i]
-		if task.StageID == stageID && task.TaskID == taskID {
-			return task
+	for i := range pipeline.NodeRuns {
+		nodeRun := &pipeline.NodeRuns[i]
+		if nodeRun.NodeID == nodeID && nodeRun.NodeRunID == nodeRunID {
+			return nodeRun
 		}
 	}
-	t.Fatalf("task %s/%s not found", stageID, taskID)
+	t.Fatalf("node run %s/%s not found", nodeID, nodeRunID)
 	return nil
 }
 

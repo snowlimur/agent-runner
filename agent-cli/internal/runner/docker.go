@@ -403,16 +403,15 @@ func buildRunSpec(req RunRequest) (runSpec, error) {
 		managedContainerLabelKey:        managedContainerLabelValue,
 		managedContainerCWDHashLabelKey: cwdHash,
 	}
+	pipelineNodeTimeoutSec := resolvePipelineTaskIdleTimeoutSec(req.PipelineTaskIdleTimeoutSec)
 	env := []string{
 		"GH_TOKEN=" + req.GitHubToken,
 		"CLAUDE_CODE_OAUTH_TOKEN=" + req.ClaudeToken,
 		"SOURCE_WORKSPACE_DIR=" + req.SourceWorkspaceDir,
 		"GIT_USER_NAME=" + req.GitUserName,
 		"GIT_USER_EMAIL=" + req.GitUserEmail,
-		fmt.Sprintf(
-			"PIPELINE_TASK_IDLE_TIMEOUT_SEC=%d",
-			resolvePipelineTaskIdleTimeoutSec(req.PipelineTaskIdleTimeoutSec),
-		),
+		fmt.Sprintf("PIPELINE_AGENT_IDLE_TIMEOUT_SEC=%d", pipelineNodeTimeoutSec),
+		fmt.Sprintf("PIPELINE_COMMAND_TIMEOUT_SEC=%d", pipelineNodeTimeoutSec),
 		"FORCE_COLOR=1",
 	}
 
