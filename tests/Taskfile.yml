@@ -6,21 +6,13 @@ tasks:
       - docker compose run --rm claude
 
   go:
-    cmds:
-      - docker compose run --rm claude-go -vv "build and run the project, then print current golang version"
-
-  rust:
-    cmds:
-      - docker compose run --rm claude-rust "build and run the project, then print current rust version"
-
-  cli:go:
     desc: Build agent-cli and run it from examples/golang workspace
     cmds:
       - cd ../agent-cli && GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache go build -o /tmp/agent-cli .
-      - cd golang && /tmp/agent-cli run "build and run the project, then print current golang version"
+      - cd golang && /tmp/agent-cli run --debug "print current golang version"
 
-  cli:go:plan:
-    desc: Build agent-cli and run YAML pipeline with 2 prompts (one inline, one from file)
+  go:plan:
+    desc: Build agent-cli and run YAML pipeline
     cmds:
       - cd ../agent-cli && GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache go build -o /tmp/agent-cli .
-      - cd golang && /tmp/agent-cli run --pipeline plan.yml
+      - cd golang && /tmp/agent-cli run --pipeline plan.yml --var TASK_BRANCH="feature-a" --var DUMMY_FILE="TEST.md"

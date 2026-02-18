@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,10 +21,59 @@ import (
 )
 
 type runOptions struct {
-	Prompt     string
-	Pipeline   string
-	JSONOutput bool
-	Model      string
+	Prompt       string
+	Pipeline     string
+	TemplateVars map[string]string
+	JSONOutput   bool
+	Model        string
+	Debug        bool
+}
+
+var templateVarNamePattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+type templateVarValues struct {
+	values map[string]string
+}
+
+func (v *templateVarValues) String() string {
+	if len(v.values) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(v.values))
+	for key := range v.values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, key+"="+v.values[key])
+	}
+	return strings.Join(pairs, ",")
+}
+
+func (v *templateVarValues) Set(raw string) error {
+	entry := strings.TrimSpace(raw)
+	parts := strings.SplitN(entry, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid --var %q: expected KEY=VALUE", raw)
+	}
+
+	key := strings.TrimSpace(parts[0])
+	if !templateVarNamePattern.MatchString(key) {
+		return fmt.Errorf("invalid --var name %q: expected UPPER_SNAKE (^[A-Z][A-Z0-9_]*$)", key)
+	}
+
+	if v.values == nil {
+		v.values = map[string]string{}
+	}
+	if _, exists := v.values[key]; exists {
+		return fmt.Errorf("duplicate --var key %q", key)
+	}
+
+	v.values[key] = parts[1]
+	return nil
 }
 
 var (
@@ -46,7 +97,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		model = opts.Model
 	}
 
-	isPlanRun := strings.TrimSpace(opts.Pipeline) != ""
+	isPipelineRun := strings.TrimSpace(opts.Pipeline) != ""
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	record := &stats.RunRecord{
@@ -67,7 +118,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 
 	var progressUI *ProgressTUI
 	if !opts.JSONOutput {
-		progressUI = NewProgressTUI(runCtx, runOutputWriter, os.Stdin, isPlanRun, cancelRun)
+		progressUI = NewProgressTUI(runCtx, runOutputWriter, os.Stdin, isPipelineRun, cancelRun)
 		progressUI.Start()
 	}
 	progressClosed := false
@@ -95,7 +146,9 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		GitUserEmail:               cfg.Git.UserEmail,
 		Prompt:                     opts.Prompt,
 		Pipeline:                   opts.Pipeline,
+		TemplateVars:               cloneTemplateVars(opts.TemplateVars),
 		Model:                      model,
+		Debug:                      opts.Debug,
 		EnableDinD:                 cfg.Docker.EnableDinD,
 		RunIdleTimeoutSec:          cfg.Docker.RunIdleTimeoutSec,
 		PipelineTaskIdleTimeoutSec: cfg.Docker.PipelineTaskIdleTimeoutSec,
@@ -104,16 +157,22 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 			stdoutLines = append(stdoutLines, line)
 			event, kind, parseErr := result.ParseStreamLine(line)
 			if parseErr != nil {
+				if progressUI != nil {
+					progressUI.SendRawLine("stdout", line)
+				}
 				return
 			}
 
 			if kind != result.StreamLineJSONEvent || event == nil {
+				if progressUI != nil {
+					progressUI.SendRawLine("stdout", line)
+				}
 				return
 			}
 
 			if event.Result != nil {
 				mergeNormalizedMetrics(&streamMetrics, result.ExtractMetrics(*event.Result))
-				if isPlanRun {
+				if isPipelineRun {
 					mergePipelineTaskUsageForResult(
 						*event.Result,
 						sessionTaskBindings,
@@ -124,7 +183,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 				}
 			}
 
-			if isPlanRun {
+			if isPipelineRun {
 				bindPipelineTaskSession(
 					event,
 					sessionTaskBindings,
@@ -140,6 +199,9 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		},
 		OnStderrLine: func(line string) {
 			stderrLines = append(stderrLines, line)
+			if progressUI != nil {
+				progressUI.SendRawLine("stderr", line)
+			}
 		},
 	})
 	record.Normalized = streamMetrics
@@ -150,7 +212,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		parseErr    error
 		pipelineRaw string
 	)
-	if isPlanRun {
+	if isPipelineRun {
 		var pipelineRecord *stats.PipelineRunRecord
 		pipelineRecord, pipelineRaw, parseErr = extractPipelineResultFromStream(stdoutLines, stderrLines)
 		if parseErr == nil {
@@ -181,17 +243,17 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 		record.ErrorMessage = runErr.Error()
 	case parseErr != nil:
 		record.Status = stats.RunStatusParseError
-		if isPlanRun {
+		if isPipelineRun {
 			record.ErrorType = "pipeline_parse_error"
 		} else {
 			record.ErrorType = "parse_error"
 		}
 		record.ErrorMessage = parseErr.Error()
-	case !isPlanRun && parsed != nil && parsed.Agent.IsError:
+	case !isPipelineRun && parsed != nil && parsed.Agent.IsError:
 		record.Status = stats.RunStatusError
 		record.ErrorType = "agent_error"
 		record.ErrorMessage = "agent returned is_error=true"
-	case isPlanRun && record.Pipeline != nil && record.Pipeline.IsError:
+	case isPipelineRun && record.Pipeline != nil && record.Pipeline.IsError:
 		record.Status = stats.RunStatusError
 		if pipelineFailureIsTimeout(record.Pipeline) {
 			record.ErrorType = "pipeline_timeout"
@@ -217,7 +279,7 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	}
 
 	if opts.JSONOutput && parseErr == nil {
-		if isPlanRun {
+		if isPipelineRun {
 			if strings.TrimSpace(pipelineRaw) != "" {
 				fmt.Fprintln(runOutputWriter, pipelineRaw)
 			}
@@ -243,10 +305,10 @@ func RunCommand(ctx context.Context, cwd string, args []string) error {
 	if parseErr != nil {
 		return parseErr
 	}
-	if !isPlanRun && parsed != nil && parsed.Agent.IsError {
+	if !isPipelineRun && parsed != nil && parsed.Agent.IsError {
 		return errors.New("agent returned is_error=true")
 	}
-	if isPlanRun && record.Pipeline != nil && record.Pipeline.IsError {
+	if isPipelineRun && record.Pipeline != nil && record.Pipeline.IsError {
 		message := strings.TrimSpace(record.ErrorMessage)
 		if message == "" {
 			message = pipelineFailureMessage(record.Pipeline)
@@ -268,10 +330,14 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 	var pipelinePath string
 	var jsonOutput bool
 	var modelOverride string
+	var debug bool
+	var templateVars templateVarValues
 	fs.StringVar(&filePath, "file", "", "path to file with prompt")
 	fs.StringVar(&pipelinePath, "pipeline", "", "path to YAML pipeline plan file")
 	fs.BoolVar(&jsonOutput, "json", false, "print raw JSON agent result")
 	fs.StringVar(&modelOverride, "model", "", "model override (sonnet|opus)")
+	fs.BoolVar(&debug, "debug", false, "enable debug logs in container entrypoint")
+	fs.Var(&templateVars, "var", "template variable in KEY=VALUE format (repeatable, pipeline mode only)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -312,10 +378,16 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 		}
 
 		return &runOptions{
-			Pipeline:   pathForRecord,
-			JSONOutput: jsonOutput,
-			Model:      modelOverride,
+			Pipeline:     pathForRecord,
+			TemplateVars: cloneTemplateVars(templateVars.values),
+			JSONOutput:   jsonOutput,
+			Model:        modelOverride,
+			Debug:        debug,
 		}, nil
+	}
+
+	if len(templateVars.values) > 0 {
+		return nil, errors.New("--var is only supported with --pipeline")
 	}
 
 	if strings.TrimSpace(filePath) != "" && len(rest) > 0 {
@@ -337,6 +409,7 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 			Prompt:     prompt,
 			JSONOutput: jsonOutput,
 			Model:      modelOverride,
+			Debug:      debug,
 		}, nil
 	}
 
@@ -349,7 +422,20 @@ func parseRunArgs(cwd string, args []string) (*runOptions, error) {
 		Prompt:     prompt,
 		JSONOutput: jsonOutput,
 		Model:      modelOverride,
+		Debug:      debug,
 	}, nil
+}
+
+func cloneTemplateVars(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 type pipelineResultEvent struct {

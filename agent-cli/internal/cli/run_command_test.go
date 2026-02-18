@@ -94,6 +94,41 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	}
 }
 
+func TestRunCommandShowsContainerRawLogsInTUI(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	lines := []string{
+		"Starting Claude Code environment...",
+		`{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`,
+	}
+
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	if err := RunCommand(context.Background(), cwd, []string{"--debug", "build"}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+
+	output := out.String()
+	assertContains(t, output, "Container logs (non-JSON)")
+	assertContains(t, output, "[stdout] Starting Claude Code environment...")
+}
+
 func TestRunCommandParseError(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
@@ -395,6 +430,56 @@ func TestRunCommandPipelineJSONOutput(t *testing.T) {
 	}
 	if strings.Contains(string(saved.RawStatsJSON), "\"prompt\":") {
 		t.Fatal("stats.json should not contain prompt")
+	}
+}
+
+func TestRunCommandPipelinePassesTemplateVarsToRunner(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfig(t, cwd)
+
+	planPath := filepath.Join(cwd, "pipeline.yaml")
+	planContent := "version: v1\nstages:\n  - id: dev\n    mode: sequential\n    tasks:\n      - id: implement\n        prompt: hello\n"
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	pipelineResultLine := `{"type":"pipeline_result","version":"v1","status":"success","is_error":false,"stage_count":1,"completed_stages":1,"task_count":1,"failed_task_count":0,"tasks":[{"stage_id":"dev","task_id":"implement","status":"success","on_error":"fail_fast","workspace":"shared","model":"opus","verbosity":"vv","prompt_source":"prompt","exit_code":0,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000}]}`
+	lines := []string{
+		`{"type":"pipeline_event","event":"plan_start"}`,
+		pipelineResultLine,
+	}
+
+	var capturedReq runner.RunRequest
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		capturedReq = req
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	if err := RunCommand(context.Background(), cwd, []string{"--pipeline", planPath, "--var", "B_VAR=2", "--var", "A_VAR=1"}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+
+	if capturedReq.TemplateVars["A_VAR"] != "1" {
+		t.Fatalf("expected A_VAR=1, got %#v", capturedReq.TemplateVars)
+	}
+	if capturedReq.TemplateVars["B_VAR"] != "2" {
+		t.Fatalf("expected B_VAR=2, got %#v", capturedReq.TemplateVars)
+	}
+	if len(capturedReq.TemplateVars) != 2 {
+		t.Fatalf("unexpected template vars: %#v", capturedReq.TemplateVars)
 	}
 }
 
@@ -771,6 +856,40 @@ func TestRunCommandUsesConfigModelWithoutOverride(t *testing.T) {
 	}
 	if capturedReq.Model != "sonnet" {
 		t.Fatalf("expected model from config, got %q", capturedReq.Model)
+	}
+}
+
+func TestRunCommandPassesDebugFlagToRunner(t *testing.T) {
+	cwd := t.TempDir()
+	writeTestConfigWithModel(t, cwd, "sonnet")
+
+	resultLine := `{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":2,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`
+	lines := []string{resultLine}
+
+	var capturedReq runner.RunRequest
+	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+		capturedReq = req
+		for _, line := range lines {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine(line)
+			}
+		}
+		return runner.RunOutput{
+			Stdout:   strings.Join(lines, "\n") + "\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}, nil
+	})
+	defer restore()
+
+	var out bytes.Buffer
+	runOutputWriter = &out
+
+	if err := RunCommand(context.Background(), cwd, []string{"--debug", "build"}); err != nil {
+		t.Fatalf("run command: %v", err)
+	}
+	if !capturedReq.Debug {
+		t.Fatal("expected debug flag to be passed to runner")
 	}
 }
 

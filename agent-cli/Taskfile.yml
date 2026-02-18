@@ -10,7 +10,7 @@ tasks:
     desc: Build agent-cli binary into bin/
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - '{{.GO_ENV}} go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .'
+      - 'go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .'
 
   test:
     desc: Run unit tests
@@ -21,4 +21,21 @@ tasks:
     desc: Install agent-cli into GOPATH/bin
     cmds:
       - task: build
-      - "{{.GO_ENV}} go install ."
+      - "go install ."
+
+  mod:
+    desc: downloads and tidy Go modules
+    cmds:
+      - go mod tidy
+      - go mod download
+
+  upgrade:
+    desc: upgrade deps
+    cmds:
+      - go get -t -u ./...
+
+  lint:
+    desc: run linter
+    aliases: [ l ]
+    cmds:
+      - golangci-lint run .

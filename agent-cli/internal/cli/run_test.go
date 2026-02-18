@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -96,6 +98,18 @@ func TestParseRunArgsModelOverrideWithFile(t *testing.T) {
 	}
 }
 
+func TestParseRunArgsDebugFlag(t *testing.T) {
+	t.Parallel()
+
+	opts, err := parseRunArgs(t.TempDir(), []string{"--debug", "build", "and", "test"})
+	if err != nil {
+		t.Fatalf("parse args: %v", err)
+	}
+	if !opts.Debug {
+		t.Fatal("expected debug flag to be enabled")
+	}
+}
+
 func TestParseRunArgsInvalidModelOverride(t *testing.T) {
 	t.Parallel()
 
@@ -120,6 +134,92 @@ func TestParseRunArgsPipeline(t *testing.T) {
 	}
 	if opts.Pipeline != planFile {
 		t.Fatalf("unexpected pipeline path: %q", opts.Pipeline)
+	}
+}
+
+func TestParseRunArgsPipelineWithTemplateVars(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	planFile := filepath.Join(cwd, "pipeline.yaml")
+	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	opts, err := parseRunArgs(cwd, []string{"--pipeline", planFile, "--var", "A_VAR=1", "--var", "B_VAR=2"})
+	if err != nil {
+		t.Fatalf("parse args: %v", err)
+	}
+
+	assertTemplateVars(t, opts.TemplateVars, map[string]string{
+		"A_VAR": "1",
+		"B_VAR": "2",
+	})
+}
+
+func TestParseRunArgsTemplateVarRequiresPipeline(t *testing.T) {
+	t.Parallel()
+
+	_, err := parseRunArgs(t.TempDir(), []string{"--var", "A_VAR=1", "build"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "--var is only supported with --pipeline") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRunArgsTemplateVarRejectsInvalidName(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	planFile := filepath.Join(cwd, "pipeline.yaml")
+	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	_, err := parseRunArgs(cwd, []string{"--pipeline", planFile, "--var", "a_var=1"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid --var name") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRunArgsTemplateVarRejectsDuplicateKey(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	planFile := filepath.Join(cwd, "pipeline.yaml")
+	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	_, err := parseRunArgs(cwd, []string{"--pipeline", planFile, "--var", "A_VAR=1", "--var", "A_VAR=2"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "duplicate --var key") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseRunArgsTemplateVarRejectsInvalidFormat(t *testing.T) {
+	t.Parallel()
+
+	cwd := t.TempDir()
+	planFile := filepath.Join(cwd, "pipeline.yaml")
+	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	_, err := parseRunArgs(cwd, []string{"--pipeline", planFile, "--var", "A_VAR"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid --var") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -169,5 +269,13 @@ func TestParseRunArgsRejectsLegacyPlanFileFlag(t *testing.T) {
 	_, err := parseRunArgs(cwd, []string{"--plan-file", planFile})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func assertTemplateVars(t *testing.T, got map[string]string, want map[string]string) {
+	t.Helper()
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected template vars: got=%v want=%v", got, want)
 	}
 }

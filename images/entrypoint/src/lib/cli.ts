@@ -2,10 +2,13 @@ import { Command, Option } from "commander";
 
 import type { EntrypointArgs, Model, PromptRunOptions, Verbosity } from "./types.js";
 
+const TEMPLATE_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
 interface CliOptions {
   debug?: boolean;
   model?: string;
   pipeline?: string;
+  var?: string[];
 }
 
 function buildCliProgram(): Command {
@@ -23,6 +26,11 @@ function buildCliProgram(): Command {
         .default("opus"),
     )
     .option("--pipeline <path>", "Path to YAML pipeline plan file")
+    .addOption(
+      new Option("--var <key=value>", "Template variable for pipeline inline prompts (repeatable)")
+        .argParser((value: string, previous: string[]) => [...previous, value])
+        .default([]),
+    )
     .allowUnknownOption(true)
     .allowExcessArguments(true)
     .argument("[taskArgs...]", "Prompt text (supports -v/-vv before prompt)");
@@ -38,16 +46,41 @@ function normalizeModel(value: unknown): Model {
   return "opus";
 }
 
+function parseTemplateVars(values: readonly string[]): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const raw of values) {
+    const normalized = String(raw ?? "").trim();
+    const equalIndex = normalized.indexOf("=");
+    if (equalIndex <= 0) {
+      throw new Error(`Invalid --var "${raw}": expected KEY=VALUE.`);
+    }
+
+    const key = normalized.slice(0, equalIndex).trim();
+    const value = normalized.slice(equalIndex + 1);
+    if (!TEMPLATE_VAR_NAME_PATTERN.test(key)) {
+      throw new Error(`Invalid --var name "${key}": expected UPPER_SNAKE (^[A-Z][A-Z0-9_]*$).`);
+    }
+    if (Object.prototype.hasOwnProperty.call(vars, key)) {
+      throw new Error(`Duplicate --var key "${key}".`);
+    }
+
+    vars[key] = value;
+  }
+  return vars;
+}
+
 export function resolveEntrypointArgs(rawArgs: readonly string[]): EntrypointArgs {
   const program = buildCliProgram();
   program.parse(["node", "entrypoint", ...rawArgs], { from: "node" });
 
   const options = program.opts<CliOptions>();
+  const parsedTemplateVars = parseTemplateVars(Array.isArray(options.var) ? options.var : []);
   const taskArgs = program.args.map((arg) => String(arg));
   const baseArgs: EntrypointArgs = {
     debugEnabled: Boolean(options.debug),
     model: normalizeModel(options.model),
     taskArgs,
+    templateVars: parsedTemplateVars,
   };
 
   return typeof options.pipeline === "string" ? { ...baseArgs, pipelinePath: options.pipeline } : baseArgs;

@@ -51,46 +51,62 @@ export async function runEntrypoint(): Promise<void> {
   configureGit();
 
   let dindRuntime: DinDRuntime | null = null;
+  const stopDinDRuntime = (): void => {
+    if (!dindRuntime) {
+      return;
+    }
+
+    stopDinD(dindRuntime, debugEnabled);
+    dindRuntime = null;
+  };
+
   if (isTruthyEnv(process.env.ENABLE_DIND)) {
     dindRuntime = startDinD(debugEnabled);
     installDinDSignalHandlers(() => {
-      stopDinD(dindRuntime, debugEnabled);
-      dindRuntime = null;
+      stopDinDRuntime();
     }, debugEnabled);
   }
 
-  const plan = resolvePipelinePlan(args, model);
-  if (plan !== null) {
+  try {
+    const plan = resolvePipelinePlan(args, model);
+    if (plan !== null) {
+      if (taskArgs.length > 0) {
+        throw new Error("Prompt task arguments cannot be used together with pipeline mode.");
+      }
+
+      const pipelineResult = await executePipelinePlan(plan, debugEnabled);
+      if (pipelineResult.signal) {
+        process.kill(process.pid, pipelineResult.signal);
+        return;
+      }
+
+      process.exitCode = pipelineResult.exitCode;
+      return;
+    }
+
+    if (Object.keys(args.templateVars).length > 0) {
+      throw new Error("--var can only be used together with --pipeline.");
+    }
+
     if (taskArgs.length > 0) {
-      throw new Error("Prompt task arguments cannot be used together with pipeline mode.");
-    }
+      const result = await runSinglePrompt(model, taskArgs, debugEnabled);
+      if (result.signal) {
+        process.kill(process.pid, result.signal);
+        return;
+      }
 
-    const pipelineResult = await executePipelinePlan(plan, debugEnabled);
-    if (pipelineResult.signal) {
-      process.kill(process.pid, pipelineResult.signal);
+      process.exitCode = result.code;
       return;
     }
 
-    process.exitCode = pipelineResult.exitCode;
-    return;
-  }
-
-  if (taskArgs.length > 0) {
-    const result = await runSinglePrompt(model, taskArgs, debugEnabled);
-    if (result.signal) {
-      process.kill(process.pid, result.signal);
+    const interactiveResult = await runInteractive(debugEnabled);
+    if (interactiveResult.signal) {
+      process.kill(process.pid, interactiveResult.signal);
       return;
     }
 
-    process.exitCode = result.code;
-    return;
+    process.exitCode = interactiveResult.code;
+  } finally {
+    stopDinDRuntime();
   }
-
-  const interactiveResult = await runInteractive(debugEnabled);
-  if (interactiveResult.signal) {
-    process.kill(process.pid, interactiveResult.signal);
-    return;
-  }
-
-  process.exitCode = interactiveResult.code;
 }

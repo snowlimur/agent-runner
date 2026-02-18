@@ -11,6 +11,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,7 +90,9 @@ type RunRequest struct {
 	GitUserEmail               string
 	Prompt                     string
 	Pipeline                   string
+	TemplateVars               map[string]string
 	Model                      string
+	Debug                      bool
 	EnableDinD                 bool
 	RunIdleTimeoutSec          int
 	PipelineTaskIdleTimeoutSec int
@@ -113,10 +116,6 @@ func BuildDockerArgs(req RunRequest) ([]string, error) {
 		return nil, err
 	}
 	return append([]string(nil), spec.CommandArgs...), nil
-}
-
-func RunDocker(ctx context.Context, req RunRequest) (RunOutput, error) {
-	return RunDockerStreaming(ctx, req, StreamHooks{})
 }
 
 func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) (RunOutput, error) {
@@ -367,15 +366,32 @@ func buildRunSpec(req RunRequest) (runSpec, error) {
 	}
 
 	var commandArgs []string
+	baseArgs := []string{"--model", model}
+	if req.Debug {
+		baseArgs = append(baseArgs, "--debug")
+	}
+
 	switch {
 	case prompt != "":
-		commandArgs = []string{"--model", model, "-vv", "-v", prompt}
+		commandArgs = append(baseArgs, "-vv", "-v", prompt)
 	case pipeline != "":
 		containerPipelinePath, err := resolveContainerPipelineFilePath(hostDir, pipeline)
 		if err != nil {
 			return runSpec{}, err
 		}
-		commandArgs = []string{"--model", model, "--pipeline", containerPipelinePath}
+		commandArgs = append(baseArgs, "--pipeline", containerPipelinePath)
+
+		if len(req.TemplateVars) > 0 {
+			keys := make([]string, 0, len(req.TemplateVars))
+			for key := range req.TemplateVars {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+
+			for _, key := range keys {
+				commandArgs = append(commandArgs, "--var", key+"="+req.TemplateVars[key])
+			}
+		}
 	}
 
 	enableDinD := req.EnableDinD
@@ -436,8 +452,7 @@ func pullImageBestEffort(ctx context.Context, dockerClient dockerAPI, imageRef s
 	}
 	defer reader.Close()
 
-	_, err = io.Copy(io.Discard, reader)
-	return err
+	return drainReadCloserWithContext(ctx, reader)
 }
 
 func cleanupStaleContainers(ctx context.Context, dockerClient dockerAPI, cwdHash string) error {
@@ -617,6 +632,33 @@ func waitForStreamErrorWithTimeout(streamErrCh <-chan error, timeout time.Durati
 		return err
 	case <-time.After(timeout):
 		return fmt.Errorf("timed out waiting for log stream to stop after %v", timeout)
+	}
+}
+
+func drainReadCloserWithContext(ctx context.Context, reader io.ReadCloser) error {
+	copyErrCh := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, reader)
+		copyErrCh <- err
+	}()
+
+	select {
+	case err := <-copyErrCh:
+		return err
+	case <-ctx.Done():
+		_ = reader.Close()
+		select {
+		case err := <-copyErrCh:
+			if err == nil || errors.Is(err, io.EOF) {
+				return ctx.Err()
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return ctx.Err()
+			}
+			return err
+		case <-time.After(2 * time.Second):
+			return ctx.Err()
+		}
 	}
 }
 

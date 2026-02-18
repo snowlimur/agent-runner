@@ -49,6 +49,12 @@ Run with model override:
 agent-cli run --model sonnet "build and test the project"
 ```
 
+Run with container debug logs enabled (entrypoint initialization, workspace prep, auth setup):
+
+```bash
+agent-cli run --debug "build and test the project"
+```
+
 By default, `run` uses a Bubble Tea TUI:
 - top line: current run/pipeline status
 - next level: stage-level state
@@ -68,6 +74,22 @@ Run with prompt file:
 ```bash
 agent-cli run --file ./prompt.txt
 ```
+
+Run pipeline with template vars for inline `prompt` placeholders:
+
+```bash
+agent-cli run --pipeline ./plan.yml --var A_VAR="service-a" --var B_VAR="staging"
+```
+
+`--var` is supported only with `--pipeline` and may be repeated.
+Placeholder format in inline task prompt is strict: `{{A_VAR}}` (UPPER_SNAKE only).
+`prompt_file` content is not templated.
+`--debug` is forwarded into the container entrypoint and enables extra initialization logs.
+
+Validation rules:
+- missing placeholder variable -> run fails with `Missing template vars for <stage>/<task>: ...`
+- unused `--var` key -> run fails with `Unused template vars: ...`
+- duplicate or invalid key -> argument parse error
 
 Print raw JSON result:
 

@@ -14,6 +14,7 @@ export interface EntrypointArgs {
   debugEnabled: boolean;
   model: Model;
   taskArgs: string[];
+  templateVars: Record<string, string>;
   pipelinePath?: string;
 }
 

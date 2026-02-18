@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	ansiGreen = "\x1b[32m"
-	ansiReset = "\x1b[0m"
+	ansiGreen            = "\x1b[32m"
+	ansiReset            = "\x1b[0m"
+	maxContainerLogLines = 80
 )
 
 type ProgressTUI struct {
@@ -27,6 +28,11 @@ type ProgressTUI struct {
 
 type streamEventMsg struct {
 	Event *result.StreamEvent
+}
+
+type rawLogLineMsg struct {
+	Source string
+	Line   string
 }
 
 type runFinishedMsg struct {
@@ -69,6 +75,16 @@ func (p *ProgressTUI) SendEvent(event *result.StreamEvent) {
 	p.program.Send(streamEventMsg{Event: event})
 }
 
+func (p *ProgressTUI) SendRawLine(source string, line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	p.program.Send(rawLogLineMsg{
+		Source: source,
+		Line:   line,
+	})
+}
+
 func (p *ProgressTUI) Finish(record *stats.RunRecord) {
 	if !p.finished.CompareAndSwap(false, true) {
 		return
@@ -97,6 +113,7 @@ type progressTUIModel struct {
 	toolTaskByKey          map[string]taskRef
 	toolUseIDByToolKey     map[string]string
 	pendingOutcomeBySessID map[string]taskOutcome
+	containerLogLines      []string
 
 	finalRecord *stats.RunRecord
 	cancelRun   context.CancelFunc
@@ -160,6 +177,7 @@ func newProgressTUIModel(pipelineHint bool, cancelRun context.CancelFunc) progre
 		toolTaskByKey:          map[string]taskRef{},
 		toolUseIDByToolKey:     map[string]string{},
 		pendingOutcomeBySessID: map[string]taskOutcome{},
+		containerLogLines:      make([]string, 0, 8),
 		cancelRun:              cancelRun,
 	}
 
@@ -181,13 +199,14 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+o":
 			m.expanded = !m.expanded
 		case "ctrl+c":
-			if m.cancelRun != nil && !m.interrupting && !m.done {
-				m.interrupting = true
-				m.cancelRun()
-			}
+			return m, m.interruptRun()
 		}
+	case tea.InterruptMsg:
+		return m, m.interruptRun()
 	case streamEventMsg:
 		m.handleStreamEvent(typed.Event)
+	case rawLogLineMsg:
+		m.appendContainerLogLine(typed.Source, typed.Line)
 	case runFinishedMsg:
 		m.finalRecord = typed.Record
 		if typed.Record != nil {
@@ -226,6 +245,16 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *progressTUIModel) interruptRun() tea.Cmd {
+	if !m.interrupting && !m.done {
+		m.interrupting = true
+		if m.cancelRun != nil {
+			m.cancelRun()
+		}
+	}
+	return tea.Quit
+}
+
 func (m progressTUIModel) View() string {
 	lines := make([]string, 0, 128)
 
@@ -236,6 +265,14 @@ func (m progressTUIModel) View() string {
 	}
 
 	lines = append(lines, m.renderTree()...)
+
+	if len(m.containerLogLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "Container logs (non-JSON)")
+		for _, line := range m.containerLogLines {
+			lines = append(lines, "  "+line)
+		}
+	}
 
 	if m.done && m.finalRecord != nil && m.finalRecord.Pipeline != nil {
 		lines = append(lines, "")
@@ -270,6 +307,27 @@ func (m *progressTUIModel) handleStreamEvent(event *result.StreamEvent) {
 	}
 	if event.Result != nil {
 		m.handleResultEvent(event.Result)
+	}
+}
+
+func (m *progressTUIModel) appendContainerLogLine(source string, line string) {
+	trimmedLine := strings.TrimSpace(strings.TrimRight(line, "\r"))
+	if trimmedLine == "" {
+		return
+	}
+
+	normalizedSource := strings.ToLower(strings.TrimSpace(source))
+	if normalizedSource == "" {
+		normalizedSource = "stdout"
+	}
+
+	formatted := fmt.Sprintf("[%s] %s", normalizedSource, trimmedLine)
+	m.containerLogLines = append(m.containerLogLines, formatted)
+	if len(m.containerLogLines) > maxContainerLogLines {
+		m.containerLogLines = append(
+			[]string(nil),
+			m.containerLogLines[len(m.containerLogLines)-maxContainerLogLines:]...,
+		)
 	}
 }
 

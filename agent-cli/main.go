@@ -10,6 +10,8 @@ import (
 	"agent-cli/internal/cli"
 )
 
+const minArgsWithCommand = 2
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -23,7 +25,7 @@ func run() error {
 		return fmt.Errorf("resolve current directory: %w", err)
 	}
 
-	if len(os.Args) < 2 {
+	if len(os.Args) < minArgsWithCommand {
 		printUsage()
 		return nil
 	}
@@ -48,9 +50,10 @@ func run() error {
 }
 
 func printUsage() {
-	fmt.Println("Usage:")
-	fmt.Println("  agent-cli run [--json] [--model sonnet|opus] <prompt text>")
-	fmt.Println("  agent-cli run [--json] [--model sonnet|opus] --file <path>")
-	fmt.Println("  agent-cli run [--json] [--model sonnet|opus] --pipeline <path>")
-	fmt.Println("  agent-cli stats [--json]")
+	_, _ = os.Stdout.WriteString(`Usage:
+  agent-cli run [--json] [--model sonnet|opus] [--debug] <prompt text>
+  agent-cli run [--json] [--model sonnet|opus] [--debug] --file <path>
+  agent-cli run [--json] [--model sonnet|opus] [--debug] --pipeline <path> [--var KEY=VALUE ...]
+  agent-cli stats [--json]
+`)
 }

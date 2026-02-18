@@ -27,7 +27,8 @@ type removeCall struct {
 type fakeDockerAPI struct {
 	mu sync.Mutex
 
-	imagePullErr error
+	imagePullErr    error
+	imagePullReader io.ReadCloser
 
 	listResp    []container.Summary
 	listErr     error
@@ -64,6 +65,9 @@ func (f *fakeDockerAPI) Close() error {
 func (f *fakeDockerAPI) ImagePull(_ context.Context, _ string, _ image.PullOptions) (io.ReadCloser, error) {
 	if f.imagePullErr != nil {
 		return nil, f.imagePullErr
+	}
+	if f.imagePullReader != nil {
+		return f.imagePullReader, nil
 	}
 	return io.NopCloser(strings.NewReader("{}")), nil
 }
@@ -207,6 +211,25 @@ func TestBuildDockerArgsDefaultsModelToOpus(t *testing.T) {
 	}
 }
 
+func TestBuildDockerArgsIncludesDebugFlagForPrompt(t *testing.T) {
+	args, err := BuildDockerArgs(RunRequest{
+		Image:              "claude:go",
+		CWD:                "/tmp/work",
+		SourceWorkspaceDir: "/workspace-source",
+		Prompt:             "build project",
+		Model:              "sonnet",
+		Debug:              true,
+	})
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+
+	joined := strings.Join(args, " ")
+	if joined != "--model sonnet --debug -vv -v build project" {
+		t.Fatalf("unexpected args: %q", joined)
+	}
+}
+
 func TestBuildDockerArgsRejectsInvalidModel(t *testing.T) {
 	_, err := BuildDockerArgs(RunRequest{
 		Image:              "claude:go",
@@ -237,6 +260,53 @@ func TestBuildDockerArgsPipeline(t *testing.T) {
 
 	joined := strings.Join(args, " ")
 	if joined != "--model sonnet --pipeline /workspace/.agent-cli/plans/pipeline.yaml" {
+		t.Fatalf("unexpected args: %q", joined)
+	}
+}
+
+func TestBuildDockerArgsPipelineIncludesSortedTemplateVars(t *testing.T) {
+	cwd := t.TempDir()
+	planPath := filepath.Join(cwd, ".agent-cli", "plans", "pipeline.yaml")
+
+	args, err := BuildDockerArgs(RunRequest{
+		Image:              "claude:go",
+		CWD:                cwd,
+		SourceWorkspaceDir: "/workspace-source",
+		Pipeline:           planPath,
+		Model:              "sonnet",
+		TemplateVars: map[string]string{
+			"B_VAR": "two",
+			"A_VAR": "one",
+		},
+	})
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+
+	joined := strings.Join(args, " ")
+	if joined != "--model sonnet --pipeline /workspace/.agent-cli/plans/pipeline.yaml --var A_VAR=one --var B_VAR=two" {
+		t.Fatalf("unexpected args: %q", joined)
+	}
+}
+
+func TestBuildDockerArgsPipelineIncludesDebugFlag(t *testing.T) {
+	cwd := t.TempDir()
+	planPath := filepath.Join(cwd, ".agent-cli", "plans", "pipeline.yaml")
+
+	args, err := BuildDockerArgs(RunRequest{
+		Image:              "claude:go",
+		CWD:                cwd,
+		SourceWorkspaceDir: "/workspace-source",
+		Pipeline:           planPath,
+		Model:              "sonnet",
+		Debug:              true,
+	})
+	if err != nil {
+		t.Fatalf("build args: %v", err)
+	}
+
+	joined := strings.Join(args, " ")
+	if joined != "--model sonnet --debug --pipeline /workspace/.agent-cli/plans/pipeline.yaml" {
 		t.Fatalf("unexpected args: %q", joined)
 	}
 }
@@ -456,6 +526,54 @@ func TestRunDockerStreamingInterruptedIgnoresNotFoundRemoveRace(t *testing.T) {
 	}
 }
 
+func TestRunDockerStreamingInterruptedDuringImagePullDrain(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pullReader := newBlockingReadCloser()
+	fake := &fakeDockerAPI{
+		imagePullReader: pullReader,
+	}
+	withFakeDockerAPI(t, fake)
+
+	done := make(chan struct{})
+	var out RunOutput
+	var runErr error
+	go func() {
+		out, runErr = RunDockerStreaming(ctx, RunRequest{
+			Image:              "claude:go",
+			CWD:                t.TempDir(),
+			SourceWorkspaceDir: "/workspace-source",
+			Prompt:             "build project",
+		}, StreamHooks{})
+		close(done)
+	}()
+
+	select {
+	case <-pullReader.Started():
+	case <-time.After(2 * time.Second):
+		t.Fatal("image pull drain did not start")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run did not stop after cancellation during image pull drain")
+	}
+
+	if !errors.Is(runErr, ErrInterrupted) {
+		t.Fatalf("expected ErrInterrupted, got %v", runErr)
+	}
+	if out.ExitCode != interruptedExitCode {
+		t.Fatalf("unexpected exit code: %d", out.ExitCode)
+	}
+	if !pullReader.Closed() {
+		t.Fatal("expected image pull reader to be closed on cancellation")
+	}
+}
+
 func TestRunDockerStreamingEnableDinDSetsPrivilegedAndEnv(t *testing.T) {
 	fake := &fakeDockerAPI{
 		createResp: container.CreateResponse{ID: "dind-run"},
@@ -613,6 +731,49 @@ func delayedMuxedLogStream(stdoutLines []string, delay time.Duration) io.ReadClo
 	}()
 
 	return reader
+}
+
+type blockingReadCloser struct {
+	closedCh  chan struct{}
+	startedCh chan struct{}
+	once      sync.Once
+}
+
+func newBlockingReadCloser() *blockingReadCloser {
+	return &blockingReadCloser{
+		closedCh:  make(chan struct{}),
+		startedCh: make(chan struct{}),
+	}
+}
+
+func (r *blockingReadCloser) Read(_ []byte) (int, error) {
+	r.once.Do(func() {
+		close(r.startedCh)
+	})
+	<-r.closedCh
+	return 0, io.EOF
+}
+
+func (r *blockingReadCloser) Close() error {
+	select {
+	case <-r.closedCh:
+	default:
+		close(r.closedCh)
+	}
+	return nil
+}
+
+func (r *blockingReadCloser) Closed() bool {
+	select {
+	case <-r.closedCh:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *blockingReadCloser) Started() <-chan struct{} {
+	return r.startedCh
 }
 
 func containsString(items []string, want string) bool {

@@ -1,5 +1,11 @@
 version: v1
 stages:
+  - id: prepare
+    mode: sequential
+    tasks:
+      - id: checkout
+        model: sonnet
+        prompt: "Fetch the git origin and checkout to the branch 'claude/{{TASK_BRANCH}}'. If not exist, created it"
   - id: main
     mode: parallel
     workspace: worktree
@@ -10,3 +16,15 @@ stages:
       - id: print_version
         model: sonnet
         prompt_file: "version.md"
+  - id: PR
+    mode: sequential
+    tasks:
+      - id: dummy
+        model: sonnet
+        prompt: "Make a {{DUMMY_FILE}} file with lorem ipsum content. If the file already exist make it with a '_N' suffix, where N is a number of files with such name."
+      - id: commit
+        model: sonnet
+        prompt: "/git-commit"
+      - id: pr
+        model: sonnet
+        prompt: "make a PR via GitHub CLI"

@@ -132,6 +132,23 @@ error: pipeline result event not found in stream output
 
 Check that the YAML plan file is valid and references existing prompt files. Review the raw output in `.agent-cli/runs/<latest>/output.log`.
 
+### Pipeline template variable errors (`--var`)
+
+Inline `tasks[].prompt` can contain placeholders like `{{A_VAR}}`, supplied via:
+
+```bash
+agent-cli run --pipeline plan.yml --var A_VAR=value --var B_VAR=value
+```
+
+Failures are explicit:
+- `Missing template vars for <stage>/<task>: ...` when a placeholder has no value
+- `Unused template vars: ...` when a passed `--var` key is not used
+- argument errors for invalid key format (must be `UPPER_SNAKE`) or duplicate key
+
+Notes:
+- `--var` works only with `--pipeline`
+- `prompt_file` content is not templated
+
 ### Run idle timeout
 
 ```

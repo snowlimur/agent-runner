@@ -74,6 +74,9 @@ agent-cli run --file prompt.txt
 # Pipeline plan
 agent-cli run --pipeline plan.yml
 
+# Pipeline plan with inline prompt placeholders ({{A_VAR}})
+agent-cli run --pipeline plan.yml --var A_VAR=service-a --var B_VAR=staging
+
 # JSON output
 agent-cli run --json "describe this project"
 
@@ -84,6 +87,10 @@ agent-cli run --model sonnet "quick task"
 agent-cli stats
 agent-cli stats --json
 ```
+
+`--var` is pipeline-only and repeatable.
+Inline placeholder format is strict `{{UPPER_SNAKE}}` and applies only to `tasks[].prompt` (not `prompt_file`).
+The run fails fast for missing/unused variables, duplicate keys, or invalid key names.
 
 ## Testing
 

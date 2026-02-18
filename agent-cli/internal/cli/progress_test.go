@@ -71,6 +71,60 @@ func TestProgressTUIModelCtrlOTogglesExpanded(t *testing.T) {
 	}
 }
 
+func TestProgressTUIModelCtrlCInterruptsAndQuits(t *testing.T) {
+	t.Parallel()
+
+	interrupted := false
+	model := newProgressTUIModel(true, func() {
+		interrupted = true
+	})
+
+	nextModel, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated, ok := nextModel.(progressTUIModel)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", nextModel)
+	}
+	if !updated.interrupting {
+		t.Fatal("expected model to enter interrupting state")
+	}
+	if !interrupted {
+		t.Fatal("expected cancel callback to be invoked")
+	}
+	if cmd == nil {
+		t.Fatal("expected quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("expected quit message from command")
+	}
+}
+
+func TestProgressTUIModelSignalInterruptQuits(t *testing.T) {
+	t.Parallel()
+
+	interrupted := false
+	model := newProgressTUIModel(true, func() {
+		interrupted = true
+	})
+
+	nextModel, cmd := model.Update(tea.InterruptMsg{})
+	updated, ok := nextModel.(progressTUIModel)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", nextModel)
+	}
+	if !updated.interrupting {
+		t.Fatal("expected model to enter interrupting state")
+	}
+	if !interrupted {
+		t.Fatal("expected cancel callback to be invoked")
+	}
+	if cmd == nil {
+		t.Fatal("expected quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("expected quit message from command")
+	}
+}
+
 func TestProgressTUIModelOutOfOrderResultBind(t *testing.T) {
 	t.Parallel()
 
@@ -181,6 +235,34 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 	assertContains(t, view, "total_tokens: 16")
 }
 
+func TestProgressTUIModelShowsContainerRawLogs(t *testing.T) {
+	t.Parallel()
+
+	model := newProgressTUIModel(false, nil)
+	model = applyRawLogLine(t, model, "stdout", "Starting Claude Code environment...")
+	model = applyRawLogLine(t, model, "stderr", "gh: auth ok")
+	model = applyStreamLine(t, model, `{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"Done","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`)
+
+	finishedModel, _ := model.Update(runFinishedMsg{
+		Record: &stats.RunRecord{
+			Status: stats.RunStatusSuccess,
+			Normalized: result.NormalizedMetrics{
+				InputTokens: 1,
+				OutputTokens: 1,
+			},
+		},
+	})
+	updated, ok := finishedModel.(progressTUIModel)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", finishedModel)
+	}
+
+	view := updated.View()
+	assertContains(t, view, "Container logs (non-JSON)")
+	assertContains(t, view, "[stdout] Starting Claude Code environment...")
+	assertContains(t, view, "[stderr] gh: auth ok")
+}
+
 func TestFormatCompactTokens(t *testing.T) {
 	t.Parallel()
 
@@ -215,6 +297,17 @@ func applyStreamLine(t *testing.T, model progressTUIModel, line string) progress
 	}
 
 	nextModel, _ := model.Update(streamEventMsg{Event: event})
+	updated, ok := nextModel.(progressTUIModel)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", nextModel)
+	}
+	return updated
+}
+
+func applyRawLogLine(t *testing.T, model progressTUIModel, source string, line string) progressTUIModel {
+	t.Helper()
+
+	nextModel, _ := model.Update(rawLogLineMsg{Source: source, Line: line})
 	updated, ok := nextModel.(progressTUIModel)
 	if !ok {
 		t.Fatalf("unexpected model type: %T", nextModel)

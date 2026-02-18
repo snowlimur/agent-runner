@@ -28,6 +28,8 @@ interface YamlModule {
   load: (input: string) => unknown;
 }
 
+const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{([A-Z][A-Z0-9_]*)\}\}/g;
+
 const require = createRequire(import.meta.url);
 let yamlModule: YamlModule | null = null;
 try {
@@ -189,7 +191,37 @@ function resolveDefaults(rawPlan: Record<string, unknown>, fallbackModel: Model)
   };
 }
 
-export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): PipelinePlan {
+function applyInlinePromptTemplate(
+  prompt: string,
+  stageID: string,
+  taskID: string,
+  templateVars: Readonly<Record<string, string>>,
+  usedTemplateVars: Set<string>,
+): string {
+  const missingVars = new Set<string>();
+  const replaced = prompt.replace(TEMPLATE_PLACEHOLDER_PATTERN, (_match, rawName: unknown) => {
+    const name = String(rawName ?? "");
+    usedTemplateVars.add(name);
+    if (!Object.prototype.hasOwnProperty.call(templateVars, name)) {
+      missingVars.add(name);
+      return `{{${name}}}`;
+    }
+    return templateVars[name] ?? "";
+  });
+
+  if (missingVars.size > 0) {
+    const missing = [...missingVars].sort().join(", ");
+    throw new Error(`Missing template vars for ${stageID}/${taskID}: ${missing}`);
+  }
+
+  return replaced;
+}
+
+export function loadPipelinePlan(
+  rawPlan: unknown,
+  fallbackModel: Model,
+  templateVars: Readonly<Record<string, string>>,
+): PipelinePlan {
   if (!isPlainObject(rawPlan)) {
     throw new Error("Pipeline plan root must be a YAML mapping/object.");
   }
@@ -206,6 +238,7 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
   }
 
   const stageIDs = new Set<string>();
+  const usedTemplateVars = new Set<string>();
   const stages: PipelinePlan["stages"] = rawPlan.stages.map((rawStage, stageIndex) => {
     const stage = requireObject(rawStage, `stages[${stageIndex}]`);
 
@@ -295,7 +328,8 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
           throw new Error(`prompt_file is empty for ${stageID}/${taskID}: ${promptFile.normalized}`);
         }
       } else {
-        promptText = requireNonEmptyString(promptValue, `task prompt for ${stageID}/${taskID}`);
+        const inlinePrompt = requireNonEmptyString(promptValue, `task prompt for ${stageID}/${taskID}`);
+        promptText = applyInlinePromptTemplate(inlinePrompt, stageID, taskID, templateVars, usedTemplateVars);
       }
 
       const taskOnError = normalizeOnErrorValue(
@@ -362,6 +396,13 @@ export function loadPipelinePlan(rawPlan: unknown, fallbackModel: Model): Pipeli
     };
   });
 
+  const unusedTemplateVars = Object.keys(templateVars)
+    .filter((name) => !usedTemplateVars.has(name))
+    .sort();
+  if (unusedTemplateVars.length > 0) {
+    throw new Error(`Unused template vars: ${unusedTemplateVars.join(", ")}`);
+  }
+
   return {
     version: PIPELINE_VERSION,
     defaults,
@@ -382,5 +423,5 @@ export function resolvePipelinePlan(args: EntrypointArgs, fallbackModel: Model):
   }
 
   const rawPlan = parseYamlPlan(rawYaml);
-  return loadPipelinePlan(rawPlan, fallbackModel);
+  return loadPipelinePlan(rawPlan, fallbackModel, args.templateVars);
 }
