@@ -72,10 +72,21 @@ type dockerAPI interface {
 	Close() error
 	ImagePull(ctx context.Context, ref string, options image.PullOptions) (io.ReadCloser, error)
 	ContainerList(ctx context.Context, options container.ListOptions) ([]container.Summary, error)
-	ContainerCreate(ctx context.Context, config *container.Config, hostConfig *container.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (container.CreateResponse, error)
+	ContainerCreate(
+		ctx context.Context,
+		config *container.Config,
+		hostConfig *container.HostConfig,
+		networkingConfig *network.NetworkingConfig,
+		platform *ocispec.Platform,
+		containerName string,
+	) (container.CreateResponse, error)
 	ContainerStart(ctx context.Context, containerID string, options container.StartOptions) error
 	ContainerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
-	ContainerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	ContainerWait(
+		ctx context.Context,
+		containerID string,
+		condition container.WaitCondition,
+	) (<-chan container.WaitResponse, <-chan error)
 	ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
 	ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 }
@@ -120,14 +131,6 @@ type RunOutput struct {
 type StreamHooks struct {
 	OnStdoutLine func(line string)
 	OnStderrLine func(line string)
-}
-
-func BuildDockerArgs(req RunRequest) ([]string, error) {
-	spec, err := buildRunSpec(req)
-	if err != nil {
-		return nil, err
-	}
-	return append([]string(nil), spec.CommandArgs...), nil
 }
 
 func RunDockerStreaming(ctx context.Context, req RunRequest, hooks StreamHooks) (RunOutput, error) {
@@ -406,7 +409,10 @@ func buildRunSpec(req RunRequest) (runSpec, error) {
 		"SOURCE_WORKSPACE_DIR=" + req.SourceWorkspaceDir,
 		"GIT_USER_NAME=" + req.GitUserName,
 		"GIT_USER_EMAIL=" + req.GitUserEmail,
-		fmt.Sprintf("PIPELINE_TASK_IDLE_TIMEOUT_SEC=%d", resolvePipelineTaskIdleTimeoutSec(req.PipelineTaskIdleTimeoutSec)),
+		fmt.Sprintf(
+			"PIPELINE_TASK_IDLE_TIMEOUT_SEC=%d",
+			resolvePipelineTaskIdleTimeoutSec(req.PipelineTaskIdleTimeoutSec),
+		),
 		"FORCE_COLOR=1",
 	}
 
@@ -551,7 +557,12 @@ func cleanupStaleContainers(ctx context.Context, dockerClient dockerAPI, cwdHash
 		if isContainerRunning(item) {
 			continue
 		}
-		if err := dockerClient.ContainerRemove(ctx, item.ID, container.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil && !isNotFoundError(err) {
+		if err := dockerClient.ContainerRemove(
+			ctx,
+			item.ID,
+			container.RemoveOptions{Force: true, RemoveVolumes: true},
+		); err != nil &&
+			!isNotFoundError(err) {
 			return fmt.Errorf("remove stale container %s: %w", shortenContainerID(item.ID), err)
 		}
 	}
@@ -635,7 +646,11 @@ func isNotFoundError(err error) bool {
 	return errdefs.IsNotFound(err)
 }
 
-func waitForContainer(ctx context.Context, statusCh <-chan container.WaitResponse, errCh <-chan error) (container.WaitResponse, error) {
+func waitForContainer(
+	ctx context.Context,
+	statusCh <-chan container.WaitResponse,
+	errCh <-chan error,
+) (container.WaitResponse, error) {
 	for statusCh != nil || errCh != nil {
 		select {
 		case <-ctx.Done():
@@ -660,7 +675,12 @@ func waitForContainer(ctx context.Context, statusCh <-chan container.WaitRespons
 	return container.WaitResponse{}, errors.New("container wait finished without status")
 }
 
-func streamContainerLogs(logsReader io.ReadCloser, stdoutCollector *bytes.Buffer, stderrCollector *bytes.Buffer, hooks StreamHooks) error {
+func streamContainerLogs(
+	logsReader io.ReadCloser,
+	stdoutCollector *bytes.Buffer,
+	stderrCollector *bytes.Buffer,
+	hooks StreamHooks,
+) error {
 	defer logsReader.Close()
 
 	stdoutReader, stdoutWriter := io.Pipe()

@@ -34,7 +34,10 @@ func AggregateStats(runsDir string) (*Aggregate, error) {
 	for _, path := range files {
 		record, err := LoadRunRecord(path)
 		if err != nil {
-			agg.SkippedFiles = append(agg.SkippedFiles, filepath.ToSlash(filepath.Join(filepath.Base(filepath.Dir(path)), filepath.Base(path))))
+			agg.SkippedFiles = append(
+				agg.SkippedFiles,
+				filepath.ToSlash(filepath.Join(filepath.Base(filepath.Dir(path)), filepath.Base(path))),
+			)
 			continue
 		}
 

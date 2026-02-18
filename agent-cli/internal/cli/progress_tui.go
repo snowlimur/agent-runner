@@ -211,7 +211,10 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				task.Done = true
 				task.Status = normalizeStatus(string(typed.Record.Status), "success")
 				if typed.Record.AgentResult != nil {
-					task.ResultText = mergeResultText(task.ResultText, strings.TrimSpace(typed.Record.AgentResult.Result))
+					task.ResultText = mergeResultText(
+						task.ResultText,
+						strings.TrimSpace(typed.Record.AgentResult.Result),
+					)
 				}
 				if strings.TrimSpace(task.ResultText) == "" && strings.EqualFold(task.Status, "success") {
 					task.ResultText = "Done"
@@ -274,6 +277,7 @@ func (m progressTUIModel) View() string {
 
 	if m.done && m.finalRecord != nil && m.finalRecord.Pipeline == nil {
 		lines = append(lines, "")
+		lines = append(lines, "Run Stats")
 		lines = append(lines, runSummaryLines(m.finalRecord)...)
 	}
 
@@ -741,7 +745,8 @@ func (m *progressTUIModel) renderTree() []string {
 			if task.Done {
 				resultText := strings.TrimSpace(task.ResultText)
 				if resultText == "" {
-					if strings.EqualFold(strings.TrimSpace(task.Status), "error") && strings.TrimSpace(task.ErrorText) != "" {
+					if strings.EqualFold(strings.TrimSpace(task.Status), "error") &&
+						strings.TrimSpace(task.ErrorText) != "" {
 						resultText = strings.TrimSpace(task.ErrorText)
 					} else {
 						resultText = "Done"
@@ -778,51 +783,43 @@ func (m *progressTUIModel) renderTree() []string {
 }
 
 func (m *progressTUIModel) renderPipelineStatsTable() []string {
-	headers := []string{"STAGE/TASK", "STATUS", "DURATION", "TOOL_USES", "TOKENS", "CACHE_READ", "COST_USD"}
+	headers := runStatsTableHeaders()
 	if m.finalRecord == nil || m.finalRecord.Pipeline == nil || len(m.finalRecord.Pipeline.Tasks) == 0 {
 		return renderTextTable(headers, nil)
 	}
 
 	rows := make([][]string, 0, len(m.finalRecord.Pipeline.Tasks))
 	for _, task := range m.finalRecord.Pipeline.Tasks {
-		key := buildPipelineTaskKey(task.StageID, task.TaskID)
 		liveTask := m.lookupTask(task.StageID, task.TaskID)
-		toolUses := 0
-		if liveTask != nil {
-			toolUses = liveTask.ToolUses
-		}
 
-		tokens := int64(0)
+		inputTokens := int64(0)
+		cacheCreateTokens := int64(0)
 		cacheRead := int64(0)
-		cost := 0.0
+		outputTokens := int64(0)
 		if task.Normalized != nil {
-			tokens = task.Normalized.InputTokens +
-				task.Normalized.CacheCreationInputTokens +
-				task.Normalized.CacheReadInputTokens +
-				task.Normalized.OutputTokens
+			inputTokens = task.Normalized.InputTokens
+			cacheCreateTokens = task.Normalized.CacheCreationInputTokens
 			cacheRead = task.Normalized.CacheReadInputTokens
-			cost = task.Normalized.CostUSD
+			outputTokens = task.Normalized.OutputTokens
 		}
-		if liveTask != nil && strings.TrimSpace(key) != "" {
-			if tokens == 0 {
-				tokens = liveTask.Tokens
+		totalTokens := inputTokens + cacheCreateTokens + cacheRead + outputTokens
+		if liveTask != nil {
+			if totalTokens == 0 {
+				totalTokens = liveTask.Tokens
 			}
 			if cacheRead == 0 {
 				cacheRead = liveTask.CacheReadTokens
 			}
-			if cost == 0 {
-				cost = liveTask.CostUSD
-			}
 		}
 
 		rows = append(rows, []string{
-			task.StageID + "/" + task.TaskID,
+			formatStepName(task.StageID, task.TaskID),
 			normalizeStatus(task.Status, "unknown"),
-			formatDurationMS(task.DurationMS),
-			fmt.Sprintf("%d", toolUses),
-			fmt.Sprintf("%d", tokens),
+			fmt.Sprintf("%d", inputTokens),
+			fmt.Sprintf("%d", cacheCreateTokens),
 			fmt.Sprintf("%d", cacheRead),
-			fmt.Sprintf("%.6f", cost),
+			fmt.Sprintf("%d", outputTokens),
+			fmt.Sprintf("%d", totalTokens),
 		})
 	}
 

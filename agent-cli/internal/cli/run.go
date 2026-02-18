@@ -451,7 +451,10 @@ type pipelineResultEvent struct {
 	Tasks           []stats.PipelineTaskRecord `json:"tasks"`
 }
 
-func extractPipelineResultFromStream(stdoutLines []string, stderrLines []string) (*stats.PipelineRunRecord, string, error) {
+func extractPipelineResultFromStream(
+	stdoutLines []string,
+	stderrLines []string,
+) (*stats.PipelineRunRecord, string, error) {
 	for i := len(stdoutLines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(stdoutLines[i])
 		if line == "" {
@@ -561,19 +564,47 @@ func runSummaryLines(record *stats.RunRecord) []string {
 		record.Normalized.CacheReadInputTokens +
 		record.Normalized.OutputTokens
 
+	headers := runStatsTableHeaders()
+	rows := [][]string{
+		{
+			simpleRunStepName,
+			string(record.Status),
+			fmt.Sprintf("%d", record.Normalized.InputTokens),
+			fmt.Sprintf("%d", record.Normalized.CacheCreationInputTokens),
+			fmt.Sprintf("%d", record.Normalized.CacheReadInputTokens),
+			fmt.Sprintf("%d", record.Normalized.OutputTokens),
+			fmt.Sprintf("%d", totalTokens),
+		},
+	}
+	return renderTextTable(headers, rows)
+}
+
+const simpleRunStepName = "run/prompt"
+
+func runStatsTableHeaders() []string {
 	return []string{
-		fmt.Sprintf("status: %s", record.Status),
-		fmt.Sprintf("input_tokens: %d", record.Normalized.InputTokens),
-		fmt.Sprintf("cache_creation_input_tokens: %d", record.Normalized.CacheCreationInputTokens),
-		fmt.Sprintf("cache_read_input_tokens: %d", record.Normalized.CacheReadInputTokens),
-		fmt.Sprintf("output_tokens: %d", record.Normalized.OutputTokens),
-		fmt.Sprintf("total_tokens: %d", totalTokens),
+		"STEP",
+		"STATUS",
+		"INPUT_TOKENS",
+		"CACHE_CREATE",
+		"CACHE_READ",
+		"OUTPUT_TOKENS",
+		"TOTAL_TOKENS",
 	}
 }
 
-func printRunSummary(record *stats.RunRecord) {
-	for _, line := range runSummaryLines(record) {
-		fmt.Fprintln(runOutputWriter, line)
+func formatStepName(stageID string, taskID string) string {
+	normalizedStageID := strings.TrimSpace(stageID)
+	normalizedTaskID := strings.TrimSpace(taskID)
+	switch {
+	case normalizedStageID != "" && normalizedTaskID != "":
+		return normalizedStageID + "/" + normalizedTaskID
+	case normalizedStageID != "":
+		return normalizedStageID
+	case normalizedTaskID != "":
+		return normalizedTaskID
+	default:
+		return "step"
 	}
 }
 

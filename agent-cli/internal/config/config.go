@@ -65,10 +65,6 @@ func ConfigPath(cwd string) string {
 	return filepath.Join(cwd, configDirName, configFileName)
 }
 
-func StatsDir(cwd string) string {
-	return filepath.Join(cwd, configDirName, "stats")
-}
-
 func RunsDir(cwd string) string {
 	return filepath.Join(cwd, configDirName, "runs")
 }

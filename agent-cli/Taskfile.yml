@@ -10,7 +10,7 @@ tasks:
     desc: Build agent-cli binary into bin/
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - 'go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} .'
+      - "go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
 
   test:
     desc: Run unit tests
@@ -36,6 +36,11 @@ tasks:
 
   lint:
     desc: run linter
-    aliases: [ l ]
+    aliases: [l]
     cmds:
       - golangci-lint run .
+      - deadcode ./...
+
+  fmt:
+    cmds:
+      - gofumpt -l -w .

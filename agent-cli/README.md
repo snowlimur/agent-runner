@@ -65,11 +65,10 @@ By default, `run` uses a Bubble Tea TUI:
 - when a task completes, its full `result` text is shown
 - `Ctrl+O` toggles compact vs expanded active-step view
 - after pipeline completion, a task stats table is printed with:
-  - `STAGE/TASK`, `STATUS`, `DURATION`, `TOOL_USES`, `TOKENS`, `CACHE_READ`, `COST_USD`
+  - `STEP`, `STATUS`, `INPUT_TOKENS`, `CACHE_CREATE`, `CACHE_READ`, `OUTPUT_TOKENS`, `TOTAL_TOKENS`
 
-For non-pipeline runs, the TUI footer keeps the final summary fields:
-`status`, `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`,
-`output_tokens`, `total_tokens`.
+For non-pipeline runs, the TUI footer prints a stats table with:
+`STEP`, `STATUS`, `INPUT_TOKENS`, `CACHE_CREATE`, `CACHE_READ`, `OUTPUT_TOKENS`, `TOTAL_TOKENS`.
 
 Run with prompt file:
 

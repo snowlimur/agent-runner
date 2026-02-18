@@ -124,7 +124,13 @@ func TestParseRunArgsPipeline(t *testing.T) {
 
 	cwd := t.TempDir()
 	planFile := filepath.Join(cwd, "pipeline.yaml")
-	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		planFile,
+		[]byte(
+			"version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n",
+		),
+		0o644,
+	); err != nil {
 		t.Fatalf("write plan file: %v", err)
 	}
 
@@ -142,7 +148,13 @@ func TestParseRunArgsPipelineWithTemplateVars(t *testing.T) {
 
 	cwd := t.TempDir()
 	planFile := filepath.Join(cwd, "pipeline.yaml")
-	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		planFile,
+		[]byte(
+			"version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n",
+		),
+		0o644,
+	); err != nil {
 		t.Fatalf("write plan file: %v", err)
 	}
 
@@ -174,7 +186,13 @@ func TestParseRunArgsTemplateVarRejectsInvalidName(t *testing.T) {
 
 	cwd := t.TempDir()
 	planFile := filepath.Join(cwd, "pipeline.yaml")
-	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		planFile,
+		[]byte(
+			"version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n",
+		),
+		0o644,
+	); err != nil {
 		t.Fatalf("write plan file: %v", err)
 	}
 
@@ -192,7 +210,13 @@ func TestParseRunArgsTemplateVarRejectsDuplicateKey(t *testing.T) {
 
 	cwd := t.TempDir()
 	planFile := filepath.Join(cwd, "pipeline.yaml")
-	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		planFile,
+		[]byte(
+			"version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n",
+		),
+		0o644,
+	); err != nil {
 		t.Fatalf("write plan file: %v", err)
 	}
 
@@ -210,7 +234,13 @@ func TestParseRunArgsTemplateVarRejectsInvalidFormat(t *testing.T) {
 
 	cwd := t.TempDir()
 	planFile := filepath.Join(cwd, "pipeline.yaml")
-	if err := os.WriteFile(planFile, []byte("version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		planFile,
+		[]byte(
+			"version: v1\nstages:\n  - id: s\n    mode: sequential\n    tasks:\n      - id: t\n        prompt: hi\n",
+		),
+		0o644,
+	); err != nil {
 		t.Fatalf("write plan file: %v", err)
 	}
 

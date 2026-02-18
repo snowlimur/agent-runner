@@ -20,6 +20,14 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
+func buildDockerArgsForTest(req RunRequest) ([]string, error) {
+	spec, err := buildRunSpec(req)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), spec.CommandArgs...), nil
+}
+
 type removeCall struct {
 	containerID string
 	options     container.RemoveOptions
@@ -85,7 +93,14 @@ func (f *fakeDockerAPI) ContainerList(_ context.Context, options container.ListO
 	return resp, nil
 }
 
-func (f *fakeDockerAPI) ContainerCreate(_ context.Context, config *container.Config, hostConfig *container.HostConfig, _ *network.NetworkingConfig, _ *ocispec.Platform, containerName string) (container.CreateResponse, error) {
+func (f *fakeDockerAPI) ContainerCreate(
+	_ context.Context,
+	config *container.Config,
+	hostConfig *container.HostConfig,
+	_ *network.NetworkingConfig,
+	_ *ocispec.Platform,
+	containerName string,
+) (container.CreateResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createdConfig = config
@@ -123,7 +138,11 @@ func (f *fakeDockerAPI) ContainerLogs(_ context.Context, _ string, _ container.L
 	return f.logsReader, nil
 }
 
-func (f *fakeDockerAPI) ContainerWait(ctx context.Context, _ string, _ container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+func (f *fakeDockerAPI) ContainerWait(
+	ctx context.Context,
+	_ string,
+	_ container.WaitCondition,
+) (<-chan container.WaitResponse, <-chan error) {
 	statusCh := make(chan container.WaitResponse, 1)
 	errCh := make(chan error, 1)
 
@@ -175,7 +194,7 @@ func withFakeDockerAPI(t *testing.T, fake *fakeDockerAPI) {
 }
 
 func TestBuildDockerArgsReturnsContainerCommand(t *testing.T) {
-	args, err := BuildDockerArgs(RunRequest{
+	args, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",
@@ -197,7 +216,7 @@ func TestBuildDockerArgsReturnsContainerCommand(t *testing.T) {
 }
 
 func TestBuildDockerArgsDefaultsModelToOpus(t *testing.T) {
-	args, err := BuildDockerArgs(RunRequest{
+	args, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",
@@ -213,7 +232,7 @@ func TestBuildDockerArgsDefaultsModelToOpus(t *testing.T) {
 }
 
 func TestBuildDockerArgsIncludesDebugFlagForPrompt(t *testing.T) {
-	args, err := BuildDockerArgs(RunRequest{
+	args, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",
@@ -232,7 +251,7 @@ func TestBuildDockerArgsIncludesDebugFlagForPrompt(t *testing.T) {
 }
 
 func TestBuildDockerArgsRejectsInvalidModel(t *testing.T) {
-	_, err := BuildDockerArgs(RunRequest{
+	_, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",
@@ -245,7 +264,7 @@ func TestBuildDockerArgsRejectsInvalidModel(t *testing.T) {
 }
 
 func TestBuildDockerArgsRejectsInvalidDockerMode(t *testing.T) {
-	_, err := BuildDockerArgs(RunRequest{
+	_, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",
@@ -261,7 +280,7 @@ func TestBuildDockerArgsRejectsInvalidDockerMode(t *testing.T) {
 }
 
 func TestBuildDockerArgsRejectsInvalidDinDStorageDriver(t *testing.T) {
-	_, err := BuildDockerArgs(RunRequest{
+	_, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",
@@ -294,7 +313,7 @@ func TestBuildDockerArgsPipeline(t *testing.T) {
 	cwd := t.TempDir()
 	planPath := filepath.Join(cwd, ".agent-cli", "plans", "pipeline.yaml")
 
-	args, err := BuildDockerArgs(RunRequest{
+	args, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                cwd,
 		SourceWorkspaceDir: "/workspace-source",
@@ -315,7 +334,7 @@ func TestBuildDockerArgsPipelineIncludesSortedTemplateVars(t *testing.T) {
 	cwd := t.TempDir()
 	planPath := filepath.Join(cwd, ".agent-cli", "plans", "pipeline.yaml")
 
-	args, err := BuildDockerArgs(RunRequest{
+	args, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                cwd,
 		SourceWorkspaceDir: "/workspace-source",
@@ -340,7 +359,7 @@ func TestBuildDockerArgsPipelineIncludesDebugFlag(t *testing.T) {
 	cwd := t.TempDir()
 	planPath := filepath.Join(cwd, ".agent-cli", "plans", "pipeline.yaml")
 
-	args, err := BuildDockerArgs(RunRequest{
+	args, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                cwd,
 		SourceWorkspaceDir: "/workspace-source",
@@ -362,7 +381,7 @@ func TestBuildDockerArgsPipelineRejectsOutsideCWD(t *testing.T) {
 	cwd := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "pipeline.yaml")
 
-	_, err := BuildDockerArgs(RunRequest{
+	_, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                cwd,
 		SourceWorkspaceDir: "/workspace-source",
@@ -377,7 +396,7 @@ func TestBuildDockerArgsPipelineRejectsOutsideCWD(t *testing.T) {
 }
 
 func TestBuildDockerArgsRejectsMixedPromptAndPipeline(t *testing.T) {
-	_, err := BuildDockerArgs(RunRequest{
+	_, err := buildDockerArgsForTest(RunRequest{
 		Image:              "claude:go",
 		CWD:                "/tmp/work",
 		SourceWorkspaceDir: "/workspace-source",

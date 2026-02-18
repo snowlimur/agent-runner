@@ -30,18 +30,21 @@ func TestRunCommandSuccessStream(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":2,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.5,"usage":{"input_tokens":10,"cache_creation_input_tokens":3,"cache_read_input_tokens":4,"output_tokens":5,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{"claude-sonnet":{"inputTokens":10,"outputTokens":5,"cacheReadInputTokens":4,"cacheCreationInputTokens":3,"webSearchRequests":0,"costUSD":0.5}},"uuid":"u1"}`,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -57,12 +60,27 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	assertContains(t, output, "prompt")
 	assertContains(t, output, "prompt · success")
 	assertContains(t, output, "ok")
-	assertContains(t, output, "status: success")
-	assertContains(t, output, "input_tokens: 10")
-	assertContains(t, output, "cache_creation_input_tokens: 3")
-	assertContains(t, output, "cache_read_input_tokens: 4")
-	assertContains(t, output, "output_tokens: 5")
-	assertContains(t, output, "total_tokens: 22")
+	assertContains(t, output, "Run Stats")
+	assertContains(t, output, "STEP")
+	assertContains(t, output, "STATUS")
+	assertContains(t, output, "INPUT_TOKENS")
+	assertContains(t, output, "CACHE_CREATE")
+	assertContains(t, output, "CACHE_READ")
+	assertContains(t, output, "OUTPUT_TOKENS")
+	assertContains(t, output, "TOTAL_TOKENS")
+	assertContains(t, output, "run/prompt")
+	assertContains(t, output, "success")
+	assertContains(t, output, "10")
+	assertContains(t, output, "3")
+	assertContains(t, output, "4")
+	assertContains(t, output, "5")
+	assertContains(t, output, "22")
+	assertNotContains(t, output, "status: success")
+	assertNotContains(t, output, "input_tokens: 10")
+	assertNotContains(t, output, "cache_creation_input_tokens: 3")
+	assertNotContains(t, output, "cache_read_input_tokens: 4")
+	assertNotContains(t, output, "output_tokens: 5")
+	assertNotContains(t, output, "total_tokens: 22")
 
 	saved := loadSingleRunRecord(t, cwd)
 	record := saved.Record
@@ -111,18 +129,21 @@ func TestRunCommandShowsNonJSONLogCounterInTUI(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -146,16 +167,19 @@ func TestRunCommandParseError(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		if hooks.OnStdoutLine != nil {
-			hooks.OnStdoutLine("plain text line")
-		}
-		return runner.RunOutput{
-			Stdout:   "plain text line\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			if hooks.OnStdoutLine != nil {
+				hooks.OnStdoutLine("plain text line")
+			}
+			return runner.RunOutput{
+				Stdout:   "plain text line\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -183,18 +207,21 @@ func TestRunCommandDockerExitError(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":2,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "docker error",
-			ExitCode: 17,
-		}, errors.New("exit status 17")
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "docker error",
+				ExitCode: 17,
+			}, errors.New("exit status 17")
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -239,13 +266,16 @@ func TestRunCommandInterrupted(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		return runner.RunOutput{
-			Stdout:   "",
-			Stderr:   "",
-			ExitCode: 130,
-		}, fmt.Errorf("%w: run interrupted by signal", runner.ErrInterrupted)
-	})
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			return runner.RunOutput{
+				Stdout:   "",
+				Stderr:   "",
+				ExitCode: 130,
+			}, fmt.Errorf("%w: run interrupted by signal", runner.ErrInterrupted)
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -275,13 +305,16 @@ func TestRunCommandIdleTimeout(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		return runner.RunOutput{
-			Stdout:   "",
-			Stderr:   "",
-			ExitCode: -1,
-		}, fmt.Errorf("%w: no log activity for 30m0s", runner.ErrIdleTimeout)
-	})
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			return runner.RunOutput{
+				Stdout:   "",
+				Stderr:   "",
+				ExitCode: -1,
+			}, fmt.Errorf("%w: no log activity for 30m0s", runner.ErrIdleTimeout)
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -314,18 +347,21 @@ func TestRunCommandJSONOutputOnlyFinalResult(t *testing.T) {
 		resultLine,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -354,19 +390,22 @@ func TestRunCommandFileInputDoesNotPersistPromptArtifact(t *testing.T) {
 	lines := []string{resultLine}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -405,19 +444,22 @@ func TestRunCommandPipelineJSONOutput(t *testing.T) {
 	}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -471,25 +513,32 @@ func TestRunCommandPipelinePassesTemplateVarsToRunner(t *testing.T) {
 	}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
 	runOutputWriter = &out
 
-	if err := RunCommand(context.Background(), cwd, []string{"--pipeline", planPath, "--var", "B_VAR=2", "--var", "A_VAR=1"}); err != nil {
+	if err := RunCommand(
+		context.Background(),
+		cwd,
+		[]string{"--pipeline", planPath, "--var", "B_VAR=2", "--var", "A_VAR=1"},
+	); err != nil {
 		t.Fatalf("run command: %v", err)
 	}
 
@@ -520,18 +569,21 @@ func TestRunCommandPipelineFailureReturnsTaskErrorDetails(t *testing.T) {
 		pipelineResultLine,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 1,
-		}, errors.New("container exited with code 1")
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 1,
+			}, errors.New("container exited with code 1")
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -575,18 +627,21 @@ func TestRunCommandPipelineSummaryShowsTaskStatsTable(t *testing.T) {
 		pipelineResultLine,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -599,10 +654,16 @@ func TestRunCommandPipelineSummaryShowsTaskStatsTable(t *testing.T) {
 	output := out.String()
 	assertContains(t, output, "Pipeline completed")
 	assertContains(t, output, "Pipeline Task Stats")
-	assertContains(t, output, "STAGE/TASK")
-	assertContains(t, output, "TOOL_USES")
+	assertContains(t, output, "STEP")
+	assertContains(t, output, "STATUS")
+	assertContains(t, output, "INPUT_TOKENS")
+	assertContains(t, output, "CACHE_CREATE")
 	assertContains(t, output, "CACHE_READ")
-	assertContains(t, output, "COST_USD")
+	assertContains(t, output, "OUTPUT_TOKENS")
+	assertContains(t, output, "TOTAL_TOKENS")
+	assertNotContains(t, output, "STAGE/TASK")
+	assertNotContains(t, output, "TOOL_USES")
+	assertNotContains(t, output, "COST_USD")
 	assertNotContains(t, output, "run_id:")
 	assertNotContains(t, output, "stats_file:")
 	assertNotContains(t, output, "docker_exit_code:")
@@ -629,18 +690,21 @@ func TestRunCommandPipelineTaskNormalizedIncludesCostWebSearchAndOutOfOrder(t *t
 		pipelineResultLine,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -729,18 +793,21 @@ func TestRunCommandPipelineTaskNormalizedOmittedWithoutTaskResult(t *testing.T) 
 		pipelineResultLine,
 	}
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -777,16 +844,19 @@ func TestRunCommandPipelineParseErrorUsesEntrypointMessage(t *testing.T) {
 
 	entrypointErr := "Entrypoint failed: Parallel task main/build uses shared workspace with writes. Set read_only=true or allow_shared_writes=true."
 
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		if hooks.OnStderrLine != nil {
-			hooks.OnStderrLine(entrypointErr)
-		}
-		return runner.RunOutput{
-			Stdout:   "",
-			Stderr:   entrypointErr + "\n",
-			ExitCode: 1,
-		}, errors.New("container exited with code 1")
-	})
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			if hooks.OnStderrLine != nil {
+				hooks.OnStderrLine(entrypointErr)
+			}
+			return runner.RunOutput{
+				Stdout:   "",
+				Stderr:   entrypointErr + "\n",
+				ExitCode: 1,
+			}, errors.New("container exited with code 1")
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -820,19 +890,22 @@ func TestRunCommandModelOverrideTakesPriority(t *testing.T) {
 	lines := []string{resultLine}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -854,19 +927,22 @@ func TestRunCommandUsesConfigModelWithoutOverride(t *testing.T) {
 	lines := []string{resultLine}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -888,19 +964,22 @@ func TestRunCommandPassesDebugFlagToRunner(t *testing.T) {
 	lines := []string{resultLine}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer
@@ -922,19 +1001,22 @@ func TestRunCommandUsesConfigDockerModeAndDriver(t *testing.T) {
 	lines := []string{resultLine}
 
 	var capturedReq runner.RunRequest
-	restore := withRunCommandDeps(t, func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
-		capturedReq = req
-		for _, line := range lines {
-			if hooks.OnStdoutLine != nil {
-				hooks.OnStdoutLine(line)
+	restore := withRunCommandDeps(
+		t,
+		func(ctx context.Context, req runner.RunRequest, hooks runner.StreamHooks) (runner.RunOutput, error) {
+			capturedReq = req
+			for _, line := range lines {
+				if hooks.OnStdoutLine != nil {
+					hooks.OnStdoutLine(line)
+				}
 			}
-		}
-		return runner.RunOutput{
-			Stdout:   strings.Join(lines, "\n") + "\n",
-			Stderr:   "",
-			ExitCode: 0,
-		}, nil
-	})
+			return runner.RunOutput{
+				Stdout:   strings.Join(lines, "\n") + "\n",
+				Stderr:   "",
+				ExitCode: 0,
+			}, nil
+		},
+	)
 	defer restore()
 
 	var out bytes.Buffer

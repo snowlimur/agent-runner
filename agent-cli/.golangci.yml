@@ -16,17 +16,22 @@ formatters:
     ## you may want to enable
     #- gci # checks if code and import statements are formatted, with additional rules
     #- gofmt # checks if the code is formatted according to 'gofmt' command
-    #- gofumpt # enforces a stricter format than 'gofmt', while being backwards compatible
+    - gofumpt # enforces a stricter format than 'gofmt', while being backwards compatible
     #- swaggo # formats swaggo comments
 
   # All settings can be found here https://github.com/golangci/golangci-lint/blob/HEAD/.golangci.reference.yml
   settings:
+    gofumpt:
+      module-path: agent-cli
+      local-prefixes:
+        - agent-cli
+
     goimports:
       # A list of prefixes, which, if set, checks import paths
       # with the given prefixes are grouped after 3rd-party packages.
       # Default: []
       local-prefixes:
-        - vp-stats
+        - agent-cli
 
     golines:
       # Target maximum line length.
@@ -360,7 +365,7 @@ linters:
     nolintlint:
       # Exclude following linters from requiring an explanation.
       # Default: []
-      allow-no-explanation: [ funlen, gocognit, golines ]
+      allow-no-explanation: [funlen, gocognit, golines]
       # Enable to require an explanation of nonzero length after each nolint directive.
       # Default: false
       require-explanation: true
@@ -436,18 +441,18 @@ linters:
       - common-false-positives
     # Excluding configuration per-path, per-linter, per-text and per-source.
     rules:
-      - source: 'TODO'
-        linters: [ godot ]
-      - text: 'should have a package comment'
-        linters: [ revive ]
+      - source: "TODO"
+        linters: [godot]
+      - text: "should have a package comment"
+        linters: [revive]
       - text: 'exported \S+ \S+ should have comment( \(or a comment on this block\))? or be unexported'
-        linters: [ revive ]
+        linters: [revive]
       - text: 'package comment should be of the form ".+"'
-        source: '// ?(nolint|TODO)'
-        linters: [ revive ]
+        source: "// ?(nolint|TODO)"
+        linters: [revive]
       - text: 'comment on exported \S+ \S+ should be of the form ".+"'
-        source: '// ?(nolint|TODO)'
-        linters: [ revive, staticcheck ]
+        source: "// ?(nolint|TODO)"
+        linters: [revive, staticcheck]
       - path: '_test\.go'
         linters:
           - bodyclose
