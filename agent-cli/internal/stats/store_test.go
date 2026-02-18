@@ -205,3 +205,54 @@ func TestSaveRunArtifactsCreatesBothFilesWhenOneIsEmpty(t *testing.T) {
 		})
 	}
 }
+
+func TestIsJSONObjectLine(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			name: "json_object",
+			line: `{"type":"system"}`,
+			want: true,
+		},
+		{
+			name: "json_object_with_spaces",
+			line: `   {"ok":true}  `,
+			want: true,
+		},
+		{
+			name: "json_array",
+			line: `[1,2,3]`,
+			want: false,
+		},
+		{
+			name: "json_scalar",
+			line: `"scalar"`,
+			want: false,
+		},
+		{
+			name: "invalid_json",
+			line: `{"broken":`,
+			want: false,
+		},
+		{
+			name: "empty",
+			line: "",
+			want: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := IsJSONObjectLine(tc.line); got != tc.want {
+				t.Fatalf("IsJSONObjectLine(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}

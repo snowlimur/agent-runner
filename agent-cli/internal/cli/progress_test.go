@@ -42,33 +42,22 @@ func TestProgressTUIModelPipelineHierarchyAndTaskResult(t *testing.T) {
 	assertContains(t, view, "Task 2 completed")
 	assertContains(t, view, "All checks passed")
 	assertNotContains(t, view, "rg TODO -n")
+	assertNotContains(t, view, "ctrl+o")
 }
 
-func TestProgressTUIModelCtrlOTogglesExpanded(t *testing.T) {
+func TestProgressTUIModelShowsAllActiveStepsWithoutExpandToggle(t *testing.T) {
 	t.Parallel()
 
 	model := newProgressTUIModel(true, nil)
-	if model.expanded {
-		t.Fatal("expected compact mode by default")
-	}
+	model = applyStreamLine(t, model, `{"type":"pipeline_event","event":"stage_start","stage_id":"main","mode":"sequential","task_count":1}`)
+	model = applyStreamLine(t, model, `{"type":"pipeline_event","event":"task_start","stage_id":"main","task_id":"task_1"}`)
+	model = applyStreamLine(t, model, `{"type":"pipeline_event","event":"task_session_bind","stage_id":"main","task_id":"task_1","session_id":"s1"}`)
+	model = applyStreamLine(t, model, `{"type":"assistant","session_id":"s1","message":{"id":"m1","content":[{"type":"tool_use","id":"tool-a","name":"Bash","input":{"command":"go test ./..."}}]}}`)
+	model = applyStreamLine(t, model, `{"type":"assistant","session_id":"s1","message":{"id":"m2","content":[{"type":"tool_use","id":"tool-b","name":"Bash","input":{"command":"rg TODO -n"}}]}}`)
 
-	nextModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-	updated, ok := nextModel.(progressTUIModel)
-	if !ok {
-		t.Fatalf("unexpected model type: %T", nextModel)
-	}
-	if !updated.expanded {
-		t.Fatal("expected expanded mode after ctrl+o")
-	}
-
-	nextModel, _ = updated.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-	updated, ok = nextModel.(progressTUIModel)
-	if !ok {
-		t.Fatalf("unexpected model type: %T", nextModel)
-	}
-	if updated.expanded {
-		t.Fatal("expected compact mode after second ctrl+o")
-	}
+	view := model.View()
+	assertContains(t, view, "Bash: go test ./...")
+	assertContains(t, view, "Bash: rg TODO -n")
 }
 
 func TestProgressTUIModelCtrlCInterruptsAndQuits(t *testing.T) {
@@ -233,21 +222,23 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 	assertContains(t, view, "status: success")
 	assertContains(t, view, "input_tokens: 10")
 	assertContains(t, view, "total_tokens: 16")
+	assertNotContains(t, view, "ctrl+o")
 }
 
-func TestProgressTUIModelShowsContainerRawLogs(t *testing.T) {
+func TestProgressTUIModelShowsNonJSONLogCounterOnly(t *testing.T) {
 	t.Parallel()
 
 	model := newProgressTUIModel(false, nil)
 	model = applyRawLogLine(t, model, "stdout", "Starting Claude Code environment...")
 	model = applyRawLogLine(t, model, "stderr", "gh: auth ok")
+	model = applyRawLogLine(t, model, "stderr", `{"type":"system","message":"json object line"}`)
 	model = applyStreamLine(t, model, `{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"duration_api_ms":1,"num_turns":1,"result":"Done","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`)
 
 	finishedModel, _ := model.Update(runFinishedMsg{
 		Record: &stats.RunRecord{
 			Status: stats.RunStatusSuccess,
 			Normalized: result.NormalizedMetrics{
-				InputTokens: 1,
+				InputTokens:  1,
 				OutputTokens: 1,
 			},
 		},
@@ -258,9 +249,10 @@ func TestProgressTUIModelShowsContainerRawLogs(t *testing.T) {
 	}
 
 	view := updated.View()
-	assertContains(t, view, "Container logs (non-JSON)")
-	assertContains(t, view, "[stdout] Starting Claude Code environment...")
-	assertContains(t, view, "[stderr] gh: auth ok")
+	assertContains(t, view, "Non-JSON logs written to output.log: 2")
+	assertNotContains(t, view, "Container logs (non-JSON)")
+	assertNotContains(t, view, "[stdout] Starting Claude Code environment...")
+	assertNotContains(t, view, "[stderr] gh: auth ok")
 }
 
 func TestFormatCompactTokens(t *testing.T) {

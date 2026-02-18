@@ -15,9 +15,8 @@ import (
 )
 
 const (
-	ansiGreen            = "\x1b[32m"
-	ansiReset            = "\x1b[0m"
-	maxContainerLogLines = 80
+	ansiGreen = "\x1b[32m"
+	ansiReset = "\x1b[0m"
 )
 
 type ProgressTUI struct {
@@ -99,7 +98,6 @@ func (p *ProgressTUI) Wait() error {
 type progressTUIModel struct {
 	isPipeline      bool
 	pipelineStarted bool
-	expanded        bool
 	interrupting    bool
 	done            bool
 
@@ -113,7 +111,7 @@ type progressTUIModel struct {
 	toolTaskByKey          map[string]taskRef
 	toolUseIDByToolKey     map[string]string
 	pendingOutcomeBySessID map[string]taskOutcome
-	containerLogLines      []string
+	nonJSONLogCount        int
 
 	finalRecord *stats.RunRecord
 	cancelRun   context.CancelFunc
@@ -177,7 +175,6 @@ func newProgressTUIModel(pipelineHint bool, cancelRun context.CancelFunc) progre
 		toolTaskByKey:          map[string]taskRef{},
 		toolUseIDByToolKey:     map[string]string{},
 		pendingOutcomeBySessID: map[string]taskOutcome{},
-		containerLogLines:      make([]string, 0, 8),
 		cancelRun:              cancelRun,
 	}
 
@@ -196,8 +193,6 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch typed := msg.(type) {
 	case tea.KeyMsg:
 		switch typed.String() {
-		case "ctrl+o":
-			m.expanded = !m.expanded
 		case "ctrl+c":
 			return m, m.interruptRun()
 		}
@@ -206,7 +201,7 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case streamEventMsg:
 		m.handleStreamEvent(typed.Event)
 	case rawLogLineMsg:
-		m.appendContainerLogLine(typed.Source, typed.Line)
+		m.countNonJSONLogLine(typed.Source, typed.Line)
 	case runFinishedMsg:
 		m.finalRecord = typed.Record
 		if typed.Record != nil {
@@ -266,12 +261,9 @@ func (m progressTUIModel) View() string {
 
 	lines = append(lines, m.renderTree()...)
 
-	if len(m.containerLogLines) > 0 {
+	if m.nonJSONLogCount > 0 {
 		lines = append(lines, "")
-		lines = append(lines, "Container logs (non-JSON)")
-		for _, line := range m.containerLogLines {
-			lines = append(lines, "  "+line)
-		}
+		lines = append(lines, fmt.Sprintf("Non-JSON logs written to output.log: %d", m.nonJSONLogCount))
 	}
 
 	if m.done && m.finalRecord != nil && m.finalRecord.Pipeline != nil {
@@ -310,25 +302,15 @@ func (m *progressTUIModel) handleStreamEvent(event *result.StreamEvent) {
 	}
 }
 
-func (m *progressTUIModel) appendContainerLogLine(source string, line string) {
-	trimmedLine := strings.TrimSpace(strings.TrimRight(line, "\r"))
-	if trimmedLine == "" {
+func (m *progressTUIModel) countNonJSONLogLine(source string, line string) {
+	_ = source
+	if strings.TrimSpace(strings.TrimRight(line, "\r")) == "" {
 		return
 	}
-
-	normalizedSource := strings.ToLower(strings.TrimSpace(source))
-	if normalizedSource == "" {
-		normalizedSource = "stdout"
+	if stats.IsJSONObjectLine(line) {
+		return
 	}
-
-	formatted := fmt.Sprintf("[%s] %s", normalizedSource, trimmedLine)
-	m.containerLogLines = append(m.containerLogLines, formatted)
-	if len(m.containerLogLines) > maxContainerLogLines {
-		m.containerLogLines = append(
-			[]string(nil),
-			m.containerLogLines[len(m.containerLogLines)-maxContainerLogLines:]...,
-		)
-	}
+	m.nonJSONLogCount++
 }
 
 func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
@@ -672,12 +654,8 @@ func (m *progressTUIModel) findToolByUseID(toolUseID string) (string, taskRef, b
 }
 
 func (m *progressTUIModel) renderPipelineHeader() string {
-	action := "collapse"
-	if !m.expanded {
-		action = "expand"
-	}
 	if m.interrupting && !m.done {
-		return fmt.Sprintf("Interrupting pipeline... (ctrl+o to %s)", action)
+		return "Interrupting pipeline..."
 	}
 
 	if m.done {
@@ -685,24 +663,20 @@ func (m *progressTUIModel) renderPipelineHeader() string {
 		if m.finalRecord != nil && m.finalRecord.Status != stats.RunStatusSuccess {
 			status = "finished with errors"
 		}
-		return fmt.Sprintf("Pipeline %s (%d stages) (ctrl+o to %s)", status, m.effectiveStageCount(), action)
+		return fmt.Sprintf("Pipeline %s (%d stages)", status, m.effectiveStageCount())
 	}
 
-	return fmt.Sprintf("Running pipeline (%d stages) (ctrl+o to %s)", m.effectiveStageCount(), action)
+	return fmt.Sprintf("Running pipeline (%d stages)", m.effectiveStageCount())
 }
 
 func (m *progressTUIModel) renderRunHeader() string {
-	action := "collapse"
-	if !m.expanded {
-		action = "expand"
-	}
 	if m.interrupting && !m.done {
-		return fmt.Sprintf("Interrupting run... (ctrl+o to %s)", action)
+		return "Interrupting run..."
 	}
 	if m.done {
-		return fmt.Sprintf("Run completed (ctrl+o to %s)", action)
+		return "Run completed"
 	}
-	return fmt.Sprintf("Running agent... (ctrl+o to %s)", action)
+	return "Running agent..."
 }
 
 func (m *progressTUIModel) renderTree() []string {
@@ -789,7 +763,7 @@ func (m *progressTUIModel) renderTree() []string {
 				continue
 			}
 
-			stepLines := task.activeStepLines(m.expanded)
+			stepLines := task.activeStepLines()
 			for stepIndex, stepLine := range stepLines {
 				stepBranch := "├─"
 				if stepIndex == len(stepLines)-1 {
@@ -901,7 +875,7 @@ func (task *pipelineTaskState) removeActiveStep(toolUseID string) {
 	}
 }
 
-func (task *pipelineTaskState) activeStepLines(expanded bool) []string {
+func (task *pipelineTaskState) activeStepLines() []string {
 	lines := make([]string, 0, len(task.StepOrder))
 	for _, stepID := range task.StepOrder {
 		step, ok := task.ActiveSteps[stepID]
@@ -917,11 +891,7 @@ func (task *pipelineTaskState) activeStepLines(expanded bool) []string {
 		}
 		lines = append(lines, line)
 	}
-
-	if expanded || len(lines) <= 1 {
-		return lines
-	}
-	return lines[:1]
+	return lines
 }
 
 func applyTaskOutcome(task *pipelineTaskState, tokens int64, cacheRead int64, cost float64, resultText string) {

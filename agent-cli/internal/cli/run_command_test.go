@@ -102,7 +102,7 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	}
 }
 
-func TestRunCommandShowsContainerRawLogsInTUI(t *testing.T) {
+func TestRunCommandShowsNonJSONLogCounterInTUI(t *testing.T) {
 	cwd := t.TempDir()
 	writeTestConfig(t, cwd)
 
@@ -133,8 +133,13 @@ func TestRunCommandShowsContainerRawLogsInTUI(t *testing.T) {
 	}
 
 	output := out.String()
-	assertContains(t, output, "Container logs (non-JSON)")
-	assertContains(t, output, "[stdout] Starting Claude Code environment...")
+	assertContains(t, output, "Non-JSON logs written to output.log: 1")
+	if strings.Contains(output, "Container logs (non-JSON)") {
+		t.Fatalf("expected no raw log section in TUI, got: %q", output)
+	}
+	if strings.Contains(output, "[stdout] Starting Claude Code environment...") {
+		t.Fatalf("expected no raw stdout lines in TUI, got: %q", output)
+	}
 }
 
 func TestRunCommandParseError(t *testing.T) {

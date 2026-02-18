@@ -86,7 +86,7 @@ func appendArtifactLines(raw string, ndjsonLog *strings.Builder, outputLog *stri
 		if line == "" {
 			continue
 		}
-		if isJSONObjectLine(line) {
+		if IsJSONObjectLine(line) {
 			ndjsonLog.WriteString(line)
 			continue
 		}
@@ -94,7 +94,7 @@ func appendArtifactLines(raw string, ndjsonLog *strings.Builder, outputLog *stri
 	}
 }
 
-func isJSONObjectLine(line string) bool {
+func IsJSONObjectLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
 		return false
