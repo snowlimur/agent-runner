@@ -75,11 +75,19 @@ func TestRunCommandSuccessStream(t *testing.T) {
 		t.Fatalf("expected prompt.md to be absent, got err=%v", err)
 	}
 
+	ndjsonContent, err := os.ReadFile(filepath.Join(saved.RunDir, "output.ndjson"))
+	if err != nil {
+		t.Fatalf("read ndjson file: %v", err)
+	}
+	if got := string(ndjsonContent); got != strings.Join(lines, "\n")+"\n" {
+		t.Fatalf("unexpected output ndjson content: %q", got)
+	}
+
 	outputContent, err := os.ReadFile(filepath.Join(saved.RunDir, "output.log"))
 	if err != nil {
 		t.Fatalf("read output file: %v", err)
 	}
-	if got := string(outputContent); got != strings.Join(lines, "\n")+"\n" {
+	if got := string(outputContent); got != "" {
 		t.Fatalf("unexpected output log content: %q", got)
 	}
 
@@ -204,11 +212,19 @@ func TestRunCommandDockerExitError(t *testing.T) {
 		t.Fatalf("unexpected error type: %s", record.ErrorType)
 	}
 
+	ndjsonContent, err := os.ReadFile(filepath.Join(saved.RunDir, "output.ndjson"))
+	if err != nil {
+		t.Fatalf("read ndjson file: %v", err)
+	}
+	if got := string(ndjsonContent); got != strings.Join(lines, "\n")+"\n" {
+		t.Fatalf("unexpected output ndjson content: %q", got)
+	}
+
 	outputContent, err := os.ReadFile(filepath.Join(saved.RunDir, "output.log"))
 	if err != nil {
 		t.Fatalf("read output file: %v", err)
 	}
-	expectedOutput := strings.Join(lines, "\n") + "\n" + "docker error"
+	expectedOutput := "docker error"
 	if got := string(outputContent); got != expectedOutput {
 		t.Fatalf("unexpected output log content: %q", got)
 	}

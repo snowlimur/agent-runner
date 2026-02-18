@@ -47,7 +47,8 @@ agent-cli help
 
 Each `agent-cli run` persists artifacts to `.agent-cli/runs/<timestamp>-<id>/`:
 - `stats.json` (run record; prompt data is not stored)
-- `output.log` (combined stdout/stderr)
+- `output.ndjson` (valid JSON object logs, one object per line)
+- `output.log` (all non-JSON-object lines; stdout first, then stderr)
 
 ```bash
 # List runs
@@ -130,7 +131,7 @@ Build images first: `task image:build:all`
 error: pipeline result event not found in stream output
 ```
 
-Check that the YAML plan file is valid and references existing prompt files. Review the raw output in `.agent-cli/runs/<latest>/output.log`.
+Check that the YAML plan file is valid and references existing prompt files. Review structured events in `.agent-cli/runs/<latest>/output.ndjson` and non-JSON logs in `.agent-cli/runs/<latest>/output.log`.
 
 ### Pipeline template variable errors (`--var`)
 

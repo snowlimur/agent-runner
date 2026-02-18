@@ -118,5 +118,6 @@ Note: `agent-cli` enriches `stats.json` pipeline tasks with optional
 └── runs/
     └── <YYYYMMDDTHHMMSS>-<hex_id>/     # Per-run directory
         ├── stats.json                   # RunRecord
-        └── output.log                   # Combined stdout+stderr
+        ├── output.ndjson                # JSON object logs (NDJSON)
+        └── output.log                   # Non-JSON-object lines
 ```

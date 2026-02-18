@@ -77,7 +77,8 @@ Persists and aggregates run records.
 
 **Storage:** `.agent-cli/runs/<YYYYMMDDTHHMMSS>-<hex_id>/`
 - `stats.json` — Full run record (without prompt payload/metadata)
-- `output.log` — Combined stdout+stderr
+- `output.ndjson` — Valid JSON object logs (NDJSON)
+- `output.log` — Non-JSON-object lines (stdout first, then stderr)
 
 **Aggregation:** Sums across all runs — tokens, cost, duration, and per-model breakdowns.
 

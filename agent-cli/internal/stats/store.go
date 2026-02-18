@@ -15,6 +15,7 @@ import (
 const (
 	statsFileName         = "stats.json"
 	outputFileName        = "output.log"
+	outputNDJSONFileName  = "output.ndjson"
 	runDirTimestampFormat = "20060102T150405"
 )
 
@@ -65,11 +66,42 @@ func SaveRunArtifacts(runDir string, stdout string, stderr string) error {
 		return fmt.Errorf("create run directory: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(runDir, outputFileName), []byte(stdout+stderr), 0o644); err != nil {
+	var ndjsonLog strings.Builder
+	var outputLog strings.Builder
+	appendArtifactLines(stdout, &ndjsonLog, &outputLog)
+	appendArtifactLines(stderr, &ndjsonLog, &outputLog)
+
+	if err := os.WriteFile(filepath.Join(runDir, outputNDJSONFileName), []byte(ndjsonLog.String()), 0o644); err != nil {
+		return fmt.Errorf("write ndjson log file: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, outputFileName), []byte(outputLog.String()), 0o644); err != nil {
 		return fmt.Errorf("write output log file: %w", err)
 	}
 
 	return nil
+}
+
+func appendArtifactLines(raw string, ndjsonLog *strings.Builder, outputLog *strings.Builder) {
+	for _, line := range strings.SplitAfter(raw, "\n") {
+		if line == "" {
+			continue
+		}
+		if isJSONObjectLine(line) {
+			ndjsonLog.WriteString(line)
+			continue
+		}
+		outputLog.WriteString(line)
+	}
+}
+
+func isJSONObjectLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+
+	var payload map[string]json.RawMessage
+	return json.Unmarshal([]byte(trimmed), &payload) == nil
 }
 
 func NewRunID() (string, error) {

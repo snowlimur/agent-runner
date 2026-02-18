@@ -180,7 +180,8 @@ Each run creates a dedicated directory in:
 
 Each run directory contains:
 - `stats.json` with run metadata, normalized metrics, per-task pipeline usage metrics (when available), and error details when present (prompt data is not stored)
-- `output.log` with raw container output (`stdout` followed by `stderr`)
+- `output.ndjson` with valid JSON object logs (one JSON object per line)
+- `output.log` with all non-JSON-object lines (`stdout` first, then `stderr`)
 
 Timestamp format is UTC compact:
 `YYYYMMDDTHHMMSS.nnnnnnnnnZ`.
