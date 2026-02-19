@@ -4,3 +4,4 @@
 .idea/
 .agent-cli/
 settings.local.json
+node_modules/
