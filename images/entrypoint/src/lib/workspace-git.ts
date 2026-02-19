@@ -57,6 +57,12 @@ export function configureGit(): void {
     "claude-bot@local.docker",
   );
 
+  runSync("git", [
+    "config",
+    "--global",
+    'url.https://github.com/.insteadOf',
+    "ssh://git@github.com/",
+  ]);
   runSync("git", ["config", "--global", "user.name", gitUserName]);
   runSync("git", ["config", "--global", "user.email", gitUserEmail]);
   runSync("git", ["config", "--global", "--add", "safe.directory", TARGET_WORKSPACE_DIR]);
@@ -67,6 +73,8 @@ export function ensureGitHubAuthAndSetupGit(debugEnabled: boolean): void {
 
   debugLog(debugEnabled, "Checking GitHub CLI authentication...");
   runSync("gh", ["auth", "status"], commandOptions);
+  debugLog(debugEnabled, "Setting GitHub CLI git protocol to https...");
+  runSync("gh", ["config", "set", "git_protocol", "https"], commandOptions);
   debugLog(debugEnabled, "Configuring git credential helper via gh...");
   runSync("gh", ["auth", "setup-git"], commandOptions);
 }

@@ -50,13 +50,13 @@ agent-cli run [--pipeline plan.yml]
   ├─ Load .agent-cli/config.toml
   ├─ Start Docker container ──────────► entrypoint.ts → main.ts:runEntrypoint()
   ├─ Stream stdout/stderr                 ├─ prepareWorkspaceFromReadOnlySource()
-  │   ├─ ParseStreamLine() per line       ├─ ensureGitHubAuthAndSetupGit()
-  │   ├─ Feed ProgressTUI                 ├─ (optional) startDinD()
-  │   └─ Accumulate usage metrics         └─ mode dispatch:
-  ├─ Extract pipeline_result                  ├─ pipeline: parse v2 YAML → execute state machine
-  │   or AgentResult                          ├─ prompt: run single Claude process
-  ├─ Persist RunRecord + artifacts            └─ interactive: run Claude without -p
-  └─ Print summary / return JSON
+  │   ├─ ParseStreamLine() per line       ├─ configureGit()
+  │   ├─ Feed ProgressTUI                 ├─ ensureGitHubAuthAndSetupGit()
+  │   └─ Accumulate usage metrics         ├─ (optional) startDinD()
+  ├─ Extract pipeline_result              └─ mode dispatch:
+  │   or AgentResult                          ├─ pipeline: parse v2 YAML → execute state machine
+  ├─ Persist RunRecord + artifacts            ├─ prompt: run single Claude process
+  └─ Print summary / return JSON              └─ interactive: run Claude without -p
 ```
 
 ## Key Interfaces

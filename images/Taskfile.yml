@@ -18,6 +18,11 @@ tasks:
     cmds:
       - docker build -f Dockerfile -t {{.IMAGE_PREFIX}}:{{.BASE_TAG}} {{.DOCKER_CONTEXT}}
 
+  build:base-f:
+    desc: Build base image from Dockerfile
+    cmds:
+      - docker build -f Dockerfile --no-cache -t {{.IMAGE_PREFIX}}:{{.BASE_TAG}} {{.DOCKER_CONTEXT}}
+
   build:go:
     desc: Build Go development image from Dockerfile.go
     deps:

@@ -45,8 +45,8 @@ export async function runEntrypoint(): Promise<void> {
   debugLog(debugEnabled, `Working directory: ${process.cwd()}`);
 
   prepareWorkspaceFromReadOnlySource(debugEnabled);
-  ensureGitHubAuthAndSetupGit(debugEnabled);
   configureGit();
+  ensureGitHubAuthAndSetupGit(debugEnabled);
 
   let dindRuntime: DinDRuntime | null = null;
   const stopDinDRuntime = (): void => {

@@ -84,8 +84,8 @@ Persists and aggregates run records.
 
 1. `resolveEntrypointArgs()` — parse `--model`, `--pipeline`, `--debug`, `[taskArgs...]`
 2. `prepareWorkspaceFromReadOnlySource()` — copy read-only source mount → `/workspace`
-3. `ensureGitHubAuthAndSetupGit()` — run `gh auth login`, configure git identity
-4. `configureGit()` — set user name/email
+3. `configureGit()` — set `user.name`/`user.email`, force `ssh://git@github.com/` to `https://github.com/`, add `safe.directory=/workspace`
+4. `ensureGitHubAuthAndSetupGit()` — run `gh auth status`, `gh config set git_protocol https`, then `gh auth setup-git`
 5. `startDinD()` — optional, when `ENABLE_DIND=true`
 6. Mode dispatch:
    - **Pipeline:** `resolvePipelinePlan()` → `executePipelinePlan()`

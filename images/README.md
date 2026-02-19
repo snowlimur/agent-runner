@@ -111,11 +111,15 @@ The runtime entrypoint in the image is compiled JavaScript:
 
 1. Parses args (`--debug`, `--model`, `--pipeline`, task args).
 2. Copies source from `SOURCE_WORKSPACE_DIR` (default `/workspace-source`) into writable `/workspace`.
-3. Runs `gh auth status` and `gh auth setup-git`.
-4. Configures global git settings:
+3. Configures global git settings:
+   - `url."https://github.com/".insteadOf="ssh://git@github.com/"`;
    - `user.name` from `GIT_USER_NAME` / `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` (fallback: `Claude Code Agent`);
    - `user.email` from `GIT_USER_EMAIL` / `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` (fallback: `claude-bot@local.docker`);
    - `safe.directory=/workspace`.
+4. Runs GitHub CLI setup:
+   - `gh auth status`;
+   - `gh config set git_protocol https`;
+   - `gh auth setup-git`.
 5. Starts `dockerd` if `ENABLE_DIND` is truthy; otherwise it can use a mounted host Docker socket.
 6. Runs one mode:
    - pipeline (`--pipeline <path>`);
