@@ -16,3 +16,7 @@ tasks:
     cmds:
       - task: cli:install
       - task: image:build:all
+
+  agent:
+    cmds:
+      - agent-cli run --pipeline pipelines/issue-flow.yml --var TASK="1"

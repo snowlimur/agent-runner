@@ -1,0 +1,89 @@
+version: v2
+entry: prepare_branch
+
+defaults:
+  model: opus
+  agent_idle_timeout_sec: 1800
+  command_timeout_sec: 20
+
+limits:
+  max_iterations: 300
+  max_same_node_hits: 200
+
+nodes:
+  prepare_branch:
+    run:
+      kind: agent
+      prompt: "/issue-branch-prepare {{TASK}}"
+      decision:
+        schema_file: ./pipelines/schemas/prepare-branch.schema.json
+    transitions:
+      - when: 'run.status == "error"'
+        to: failed
+      - when: 'decision.decision == "failed"'
+        to: failed
+      - when: 'decision.decision == "branch_ready"'
+        to: issue_gate
+
+  issue_gate:
+    run:
+      kind: command
+      cmd: "bash ./pipelines/scripts/issue-gate.sh"
+      cwd: "."
+    transitions:
+      - when: "run.exit_code == 0"
+        to: planner
+      - when: "run.exit_code == 10"
+        to: needs_spec
+      - when: "run.exit_code != 0"
+        to: failed
+
+  planner:
+    run:
+      kind: agent
+      prompt: "/issue-planner {{TASK}}"
+      decision:
+        schema_file: ./pipelines/schemas/planner.schema.json
+    transitions:
+      - when: 'run.status == "error"'
+        to: failed
+      - when: 'decision.decision == "failed"'
+        to: failed
+      - when: 'decision.decision == "implementer"'
+        to: implementer
+
+  implementer:
+    run:
+      kind: agent
+      prompt: "/issue-implementer {{TASK}}"
+      decision:
+        schema_file: ./pipelines/schemas/implementer.schema.json
+    transitions:
+      - when: 'run.status == "error"'
+        to: failed
+      - when: 'decision.decision == "failed"'
+        to: failed
+      - when: 'decision.decision == "todo_missing"'
+        to: failed
+      - when: 'decision.decision == "implementer"'
+        to: implementer
+      - when: 'decision.decision == "done"'
+        to: success
+
+  needs_spec:
+    terminal: true
+    terminal_status: success
+    exit_code: 0
+    message: "Issue has needs-spec label. Development is skipped."
+
+  success:
+    terminal: true
+    terminal_status: success
+    exit_code: 0
+    message: "All TODO items are completed."
+
+  failed:
+    terminal: true
+    terminal_status: failed
+    exit_code: 1
+    message: "Pipeline failed due to label gating or execution error."
