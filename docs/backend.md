@@ -98,6 +98,8 @@ Validates YAML v2 graph DSL at startup (fail-fast):
 - `version: v2`, `entry`, `nodes`, `defaults`, `limits`
 - Executable nodes: `run.kind` (agent|command) + `transitions[]`
 - Terminal nodes: `terminal: true`, `terminal_status`, `exit_code`, `message`
+- Built-in terminal nodes: `success` and `fail` are always present; explicit override is allowed only as terminal nodes
+- `entry` cannot be `success` or `fail`
 - Template var substitution for inline `prompt` fields (`{{UPPER_SNAKE}}`)
 - Schema loading: reads + parses `decision.schema_file` JSON for each agent node
 
@@ -105,6 +107,7 @@ Validates YAML v2 graph DSL at startup (fail-fast):
 
 Executes the plan as a state machine:
 - Starts from `entry`, evaluates transitions top-to-bottom, follows first match
+- Adds implicit fallback transition `run.status == "error" -> fail` only when no semantically equivalent check already exists in node transitions
 - Enforces `max_iterations` and `max_same_node_hits` limits
 - Emits `pipeline_event` JSON on stdout per node lifecycle
 - **Agent nodes:** spawns `claude --dangerously-skip-permissions --model <m> --verbose --output-format stream-json --json-schema <schema-json> -p <prompt>`; reads `result.structured_output` for the decision payload; validates against JSON schema

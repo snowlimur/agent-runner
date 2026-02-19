@@ -22,10 +22,10 @@ Steps:
    - `git add .issues/<id>/todo.md`
    - `git commit -m "plan(issue:<id>): create todo checklist"`
    - `git push -u origin issue/<id>` (or `git push origin issue/<id>` if upstream already configured)
-7. Return `{"decision":"implementer"}`.
+7. Return `{"status":"done"}`.
 
 Failure behavior:
-- On any blocker return `{"decision":"failed","reason":"<short reason>"}`.
+- On any blocker return `{"status":"failed","reason":"<short reason>"}`.
 
 Output rules:
 - Final response must be exactly one JSON object.

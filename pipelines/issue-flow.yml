@@ -14,15 +14,15 @@ nodes:
   prepare_branch:
     run:
       kind: agent
-      prompt: "/issue-branch-prepare {{TASK}}"
+      prompt: "/prepare-branch {{TASK}}"
       decision:
         schema_file: ./pipelines/schemas/prepare-branch.schema.json
     transitions:
       - when: 'run.status == "error"'
-        to: failed
-      - when: 'decision.decision == "failed"'
-        to: failed
-      - when: 'decision.decision == "branch_ready"'
+        to: fail
+      - when: 'decision.status == "failed"'
+        to: fail
+      - when: 'decision.status == "branch_ready"'
         to: issue_gate
 
   issue_gate:
@@ -36,7 +36,7 @@ nodes:
       - when: "run.exit_code == 10"
         to: needs_spec
       - when: "run.exit_code != 0"
-        to: failed
+        to: fail
 
   planner:
     run:
@@ -46,10 +46,10 @@ nodes:
         schema_file: ./pipelines/schemas/planner.schema.json
     transitions:
       - when: 'run.status == "error"'
-        to: failed
-      - when: 'decision.decision == "failed"'
-        to: failed
-      - when: 'decision.decision == "implementer"'
+        to: fail
+      - when: 'decision.status == "failed"'
+        to: fail
+      - when: 'decision.status == "done"'
         to: implementer
 
   implementer:
@@ -60,14 +60,14 @@ nodes:
         schema_file: ./pipelines/schemas/implementer.schema.json
     transitions:
       - when: 'run.status == "error"'
-        to: failed
-      - when: 'decision.decision == "failed"'
-        to: failed
-      - when: 'decision.decision == "todo_missing"'
-        to: failed
-      - when: 'decision.decision == "implementer"'
+        to: fail
+      - when: 'decision.status == "failed"'
+        to: fail
+      - when: 'decision.status == "todo_missing"'
+        to: fail
+      - when: 'decision.status == "todo_not_empty"'
         to: implementer
-      - when: 'decision.decision == "done"'
+      - when: 'decision.status == "done"'
         to: success
 
   needs_spec:
@@ -75,15 +75,3 @@ nodes:
     terminal_status: success
     exit_code: 0
     message: "Issue has needs-spec label. Development is skipped."
-
-  success:
-    terminal: true
-    terminal_status: success
-    exit_code: 0
-    message: "All TODO items are completed."
-
-  failed:
-    terminal: true
-    terminal_status: failed
-    exit_code: 1
-    message: "Pipeline failed due to label gating or execution error."

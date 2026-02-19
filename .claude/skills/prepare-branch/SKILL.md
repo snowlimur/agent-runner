@@ -1,5 +1,5 @@
 ---
-name: issue-branch-prepare
+name: prepare-branch
 description: Prepare local git state for issue work by syncing main and checking out issue/<id>. Use only when explicitly invoked.
 argument-hint: <issue-id>
 disable-model-invocation: true
@@ -18,8 +18,8 @@ Steps:
    - else if local branch exists: `git checkout issue/<id>`
    - else: `git checkout -b issue/<id>`
 4. Return JSON only:
-   - success: `{"decision":"branch_ready"}`
-   - failure: `{"decision":"failed","reason":"<short reason>"}`
+   - success: `{"status":"branch_ready"}`
+   - failure: `{"status":"failed","reason":"<short reason>"}`
 
 Output rules:
 - Final response must be exactly one JSON object.

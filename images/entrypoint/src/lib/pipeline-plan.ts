@@ -10,7 +10,7 @@ import {
   PIPELINE_VERSION,
   TARGET_WORKSPACE_DIR,
 } from "./constants.js";
-import { compileCondition } from "./condition-eval.js";
+import { compileCondition, containsRunStatusErrorCheck } from "./condition-eval.js";
 import type {
   EntrypointArgs,
   JSONValue,
@@ -34,6 +34,9 @@ interface YamlModule {
 }
 
 const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{([A-Z][A-Z0-9_]*)\}\}/g;
+const BUILTIN_SUCCESS_NODE_ID = "success";
+const BUILTIN_FAIL_NODE_ID = "fail";
+const DEFAULT_ERROR_FALLBACK_WHEN = 'run.status == "error"';
 
 const require = createRequire(import.meta.url);
 let yamlModule: YamlModule | null = null;
@@ -283,6 +286,54 @@ function parseTransitions(rawTransitions: unknown, fieldName: string): PipelineE
   });
 }
 
+function createBuiltinSuccessTerminalNode(): PipelineTerminalNode {
+  return {
+    id: BUILTIN_SUCCESS_NODE_ID,
+    terminal: true,
+    terminalStatus: "success",
+    exitCode: 0,
+    message: "",
+  };
+}
+
+function createBuiltinFailTerminalNode(): PipelineTerminalNode {
+  return {
+    id: BUILTIN_FAIL_NODE_ID,
+    terminal: true,
+    terminalStatus: "failed",
+    exitCode: 1,
+    message: "",
+  };
+}
+
+function hasBuiltinNodeID(nodeID: string): boolean {
+  return nodeID === BUILTIN_SUCCESS_NODE_ID || nodeID === BUILTIN_FAIL_NODE_ID;
+}
+
+function isTerminalNode(node: PipelineNode): node is PipelineTerminalNode {
+  return "terminal" in node && node.terminal;
+}
+
+function ensureBuiltinTerminalNodes(nodes: Record<string, PipelineNode>): void {
+  if (!nodes[BUILTIN_SUCCESS_NODE_ID]) {
+    nodes[BUILTIN_SUCCESS_NODE_ID] = createBuiltinSuccessTerminalNode();
+  }
+  if (!nodes[BUILTIN_FAIL_NODE_ID]) {
+    nodes[BUILTIN_FAIL_NODE_ID] = createBuiltinFailTerminalNode();
+  }
+}
+
+function ensureErrorFallbackTransition(node: PipelineExecutableNode): void {
+  const hasErrorTransition = node.transitions.some((transition) => containsRunStatusErrorCheck(transition.when));
+  if (hasErrorTransition) {
+    return;
+  }
+  node.transitions.push({
+    when: DEFAULT_ERROR_FALLBACK_WHEN,
+    to: BUILTIN_FAIL_NODE_ID,
+  });
+}
+
 function resolveAgentRun(
   nodeID: string,
   rawRun: Record<string, unknown>,
@@ -416,6 +467,9 @@ export function loadPipelinePlan(
   }
 
   const entryNode = requireNonEmptyString(rawPlan.entry, "entry");
+  if (hasBuiltinNodeID(entryNode)) {
+    throw new PipelinePlanError(`entry must not be built-in terminal node: ${entryNode}`);
+  }
   const defaults = resolveDefaults(rawPlan, fallbackModel);
   const limits = resolveLimits(rawPlan);
 
@@ -435,18 +489,25 @@ export function loadPipelinePlan(
       throw new PipelinePlanError(`Duplicate node id: ${normalizedID}`);
     }
     nodeOrder.push(normalizedID);
-    nodes[normalizedID] = resolveNode(normalizedID, rawNode, defaults, templateVars, usedTemplateVars);
+    const resolvedNode = resolveNode(normalizedID, rawNode, defaults, templateVars, usedTemplateVars);
+    if (hasBuiltinNodeID(normalizedID) && !isTerminalNode(resolvedNode)) {
+      throw new PipelinePlanError(`nodes.${normalizedID} must be a terminal node when overriding built-in node.`);
+    }
+    nodes[normalizedID] = resolvedNode;
   }
 
   if (!nodes[entryNode]) {
     throw new PipelinePlanError(`entry node is not defined in nodes: ${entryNode}`);
   }
 
+  ensureBuiltinTerminalNodes(nodes);
+
   for (const node of Object.values(nodes)) {
-    if ("terminal" in node && node.terminal) {
+    if (isTerminalNode(node)) {
       continue;
     }
     const executableNode = node as PipelineExecutableNode;
+    ensureErrorFallbackTransition(executableNode);
 
     for (const transition of executableNode.transitions) {
       if (!nodes[transition.to]) {

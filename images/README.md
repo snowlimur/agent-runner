@@ -179,10 +179,13 @@ Supported values:
 
 Constraints:
 
-- `entry` must reference an existing node id.
+- `entry` must reference an existing node id and cannot be `success` or `fail`.
 - `nodes` must be a non-empty mapping.
+- Built-in terminal nodes `success` and `fail` are always available.
+- If `nodes.success` or `nodes.fail` is explicitly declared, it must be a terminal node.
 - Executable node:
   - requires `run` and non-empty `transitions`.
+  - receives implicit fallback transition `run.status == "error" -> fail` only when no semantically equivalent condition already exists in transitions.
 - Terminal node (`terminal: true`):
   - requires `terminal_status` and `exit_code`.
   - forbids `run` and `transitions`.
@@ -238,7 +241,7 @@ nodes:
         schema_file: schemas/reviewer.schema.json
     transitions:
       - when: 'decision.decision == "approved"'
-        to: done
+        to: success
       - when: 'decision.decision == "needs_fixes"'
         to: implementer
 
@@ -248,10 +251,11 @@ nodes:
     exit_code: 20
     message: "Pipeline blocked by validation errors."
 
-  done:
+  fail:
     terminal: true
-    terminal_status: success
-    exit_code: 0
+    terminal_status: failed
+    exit_code: 1
+    message: "Pipeline failed on execution path."
 ```
 
 ## Pipeline Execution and Events
@@ -260,6 +264,7 @@ nodes:
 
 - Executes a state machine from `entry` until a terminal node is reached.
 - Evaluates transitions top-to-bottom and takes the first matching `when`.
+- Appends fallback transition `run.status == "error" -> fail` only for executable nodes that do not already check `run.status == "error"` semantically.
 - Stops with system errors if no transition matches or limits are exceeded.
 - For `kind: agent`, Claude is always started with:
   - `--verbose --output-format stream-json --json-schema <schema-json>`

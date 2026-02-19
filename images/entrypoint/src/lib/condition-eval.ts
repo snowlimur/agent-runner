@@ -466,6 +466,34 @@ function evaluateNode(node: ASTNode, scope: PipelineConditionScope): JSONValue {
   }
 }
 
+function isRunStatusPath(node: ASTNode): boolean {
+  return node.type === "path" && node.segments.length === 2 && node.segments[0] === "run" && node.segments[1] === "status";
+}
+
+function isErrorLiteral(node: ASTNode): boolean {
+  return node.type === "literal" && node.value === "error";
+}
+
+function isRunStatusErrorEquality(node: ASTNode): boolean {
+  if (node.type !== "binary" || node.operator !== "==") {
+    return false;
+  }
+  return (
+    (isRunStatusPath(node.left) && isErrorLiteral(node.right)) ||
+    (isErrorLiteral(node.left) && isRunStatusPath(node.right))
+  );
+}
+
+function astContainsRunStatusErrorCheck(node: ASTNode): boolean {
+  if (isRunStatusErrorEquality(node)) {
+    return true;
+  }
+  if (node.type !== "binary") {
+    return false;
+  }
+  return astContainsRunStatusErrorCheck(node.left) || astContainsRunStatusErrorCheck(node.right);
+}
+
 export interface CompiledCondition {
   raw: string;
   ast: ASTNode;
@@ -490,6 +518,11 @@ export function compileCondition(condition: string): CompiledCondition {
   }
 
   return { raw, ast };
+}
+
+export function containsRunStatusErrorCheck(condition: string): boolean {
+  const compiled = compileCondition(condition);
+  return astContainsRunStatusErrorCheck(compiled.ast);
 }
 
 export function evaluateCondition(compiled: CompiledCondition, scope: PipelineConditionScope): boolean {

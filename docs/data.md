@@ -56,7 +56,7 @@ PipelinePlan
 ├── entryNode
 ├── defaults: { model, agentIdleTimeoutSec, commandTimeoutSec }
 ├── limits: { maxIterations, maxSameNodeHits }
-├── nodeOrder: string[]
+├── nodeOrder: string[]               // user-declared order only (implicit built-ins excluded)
 └── nodes: Record<string, PipelineNode>
     ├── PipelineExecutableNode
     │   ├── run: PipelineAgentRun | PipelineCommandRun
@@ -67,6 +67,8 @@ PipelinePlan
         ├── exitCode: 0..255
         └── message: string
 ```
+
+Resolved plans always contain terminal nodes `success` and `fail`. If they are not defined in YAML, parser injects defaults; if defined, they must remain terminal nodes.
 
 ### PipelineAgentRun
 

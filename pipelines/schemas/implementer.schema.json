@@ -1,11 +1,11 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["decision"],
+  "required": ["status"],
   "properties": {
-    "decision": {
+    "status": {
       "type": "string",
-      "enum": ["implementer", "done", "todo_missing", "failed"]
+      "enum": ["todo_not_empty", "done", "todo_missing", "failed"]
     },
     "reason": {
       "type": "string"
