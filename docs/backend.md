@@ -98,6 +98,6 @@ Executes the plan as a state machine:
 - starts from `entry` and follows first matching transition
 - enforces `max_iterations` and `max_same_node_hits`
 - emits node-level `pipeline_event` stream
-- always runs agent nodes with `--verbose --output-format stream-json`
+- always runs agent nodes with `--verbose --output-format stream-json --json-schema <schema-json>`
 - parses final `type=result` payload into decision JSON and validates schema
 - emits final `pipeline_result` with `node_runs[]`

@@ -262,7 +262,7 @@ nodes:
 - Evaluates transitions top-to-bottom and takes the first matching `when`.
 - Stops with system errors if no transition matches or limits are exceeded.
 - For `kind: agent`, Claude is always started with:
-  - `--verbose --output-format stream-json`
+  - `--verbose --output-format stream-json --json-schema <schema-json>`
 - Entrypoint parses stream-json for decisions and forwards each stdout line unchanged.
 
 During execution, JSON events are printed:

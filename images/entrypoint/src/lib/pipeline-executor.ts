@@ -8,6 +8,7 @@ import type {
   CommandProcessResult,
   JSONValue,
   JSONObject,
+  PipelineAgentRun,
   PipelineConditionScope,
   PipelineEventName,
   PipelineEventPayloadMap,
@@ -443,6 +444,22 @@ function executeSystemErrorResult(
   };
 }
 
+function buildAgentClaudeArgs(run: PipelineAgentRun): string[] {
+  const schemaJSON = JSON.stringify(run.decision.schema);
+  return [
+    "--dangerously-skip-permissions",
+    "--model",
+    run.model,
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--json-schema",
+    schemaJSON,
+    "-p",
+    run.promptText,
+  ];
+}
+
 async function executeAgentNode(
   node: PipelineExecutableNode,
   nodeRunID: string,
@@ -471,16 +488,7 @@ async function executeAgentNode(
     started_at: startedAt.toISOString(),
   });
 
-  const args = [
-    "--dangerously-skip-permissions",
-    "--model",
-    run.model,
-    "--verbose",
-    "--output-format",
-    "stream-json",
-    "-p",
-    run.promptText,
-  ];
+  const args = buildAgentClaudeArgs(run);
 
   const boundSessionIDs = new Set<string>();
   let finalResultValue: unknown = undefined;
