@@ -10,7 +10,7 @@ tasks:
     desc: Build agent-cli binary into bin/
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - "go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
+      - "go build -ldflags=\"-X agent-cli/internal/cli.Version=$(git describe --tags --always --dirty)\" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
 
   test:
     desc: Run unit tests
