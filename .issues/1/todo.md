@@ -5,7 +5,7 @@
 
 ## Implementation checklist
 
-[ ] Create `agent-cli/internal/cli/version.go` with `VersionCommand(args []string) error` function that prints version info to stdout (follow the `StatsCommand` pattern in `stats.go`)
+[X] Create `agent-cli/internal/cli/version.go` with `VersionCommand(args []string) error` function that prints version info to stdout (follow the `StatsCommand` pattern in `stats.go`)
 [ ] Define a `Version` variable (`var Version = "dev"`) in `version.go` that can be overridden via `-ldflags` at build time
 [ ] Register the `version` command in `agent-cli/main.go` by adding a `case "version", "-v", "--version":` branch to the switch statement (~line 36)
 [ ] Update `printUsage()` in `agent-cli/main.go` to include `agent-cli version` in the help text

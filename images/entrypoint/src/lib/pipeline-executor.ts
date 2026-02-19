@@ -6,7 +6,6 @@ import { validateDecisionJSONSchema } from "./pipeline-plan.js";
 import type {
   ClaudeProcessResult,
   CommandProcessResult,
-  JSONValue,
   JSONObject,
   PipelineAgentRun,
   PipelineConditionScope,
@@ -75,7 +74,7 @@ function extractSystemInitSessionID(line: string): string {
 interface ClaudeResultEvent {
   type: string;
   session_id?: string;
-  result?: unknown;
+  structured_output?: unknown;
 }
 
 function extractFinalResultEvent(line: string): ClaudeResultEvent | null {
@@ -96,7 +95,7 @@ function extractFinalResultEvent(line: string): ClaudeResultEvent | null {
     return {
       type: "result",
       session_id: typeof payload.session_id === "string" ? payload.session_id : "",
-      result: payload.result,
+      structured_output: payload.structured_output,
     };
   } catch {
     return null;
@@ -491,7 +490,7 @@ async function executeAgentNode(
   const args = buildAgentClaudeArgs(run);
 
   const boundSessionIDs = new Set<string>();
-  let finalResultValue: unknown = undefined;
+  let finalStructuredOutput: unknown = undefined;
   let hasFinalResult = false;
   let processResult: ClaudeProcessResult;
   let executionError = "";
@@ -521,7 +520,7 @@ async function executeAgentNode(
         const maybeResult = extractFinalResultEvent(line);
         if (maybeResult) {
           hasFinalResult = true;
-          finalResultValue = maybeResult.result;
+          finalStructuredOutput = maybeResult.structured_output;
         }
       },
     });
@@ -542,22 +541,10 @@ async function executeAgentNode(
     if (!hasFinalResult) {
       errorMessage = "final result event not found in agent stream";
     } else {
-      if (isPlainObject(finalResultValue)) {
-        decision = finalResultValue as JSONObject;
-      } else if (typeof finalResultValue === "string") {
-        try {
-          const parsedDecision = JSON.parse(finalResultValue) as JSONValue;
-          if (!isPlainObject(parsedDecision)) {
-            errorMessage = "decision payload must be a JSON object";
-          } else {
-            decision = parsedDecision as JSONObject;
-          }
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          errorMessage = `failed to parse decision JSON: ${message}`;
-        }
+      if (isPlainObject(finalStructuredOutput)) {
+        decision = finalStructuredOutput as JSONObject;
       } else {
-        errorMessage = "decision payload must be a JSON object";
+        errorMessage = "decision payload must be a JSON object in result.structured_output";
       }
 
       if (!errorMessage) {
