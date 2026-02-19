@@ -57,5 +57,6 @@ func printUsage() {
   agent-cli run [--json] [--model sonnet|opus] [--debug] --file <path>
   agent-cli run [--json] [--model sonnet|opus] [--debug] --pipeline <path> [--var KEY=VALUE ...]
   agent-cli stats [--json]
+  agent-cli version
 `)
 }
