@@ -28,7 +28,7 @@ constant or version command.
     `-ldflags "-X agent-cli/internal/cli.Version=<version>"` using a git tag or
     a hardcoded value.
 
-[ ] Add unit tests in `agent-cli/internal/cli/version_test.go` to verify the output
+[X] Add unit tests in `agent-cli/internal/cli/version_test.go` to verify the output
     format of `VersionCommand()`.
 
 [ ] Run `go build` and `go test ./...` inside `agent-cli/` to verify everything
