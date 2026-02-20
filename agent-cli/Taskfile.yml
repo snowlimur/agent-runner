@@ -4,13 +4,15 @@ vars:
   BINARY_NAME: agent-cli
   BUILD_DIR: bin
   GO_ENV: GOTOOLCHAIN=local GOCACHE=/tmp/go-build-cache GOMODCACHE=/tmp/go-mod-cache
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
 tasks:
   build:
     desc: Build agent-cli binary into bin/
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - "go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
+      - "go build -ldflags \"-X agent-cli/internal/version.version={{.VERSION}}\" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
 
   test:
     desc: Run unit tests

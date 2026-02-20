@@ -52,13 +52,13 @@
 
 ## S2: Build-Time Version Injection
 
-[ ] **T2.1**: Update `Taskfile.yml` to inject version via ldflags `@agent-cli/Taskfile.yml`
+[X] **T2.1**: Update `Taskfile.yml` to inject version via ldflags `@agent-cli/Taskfile.yml`
 - Modify the `build` task `go build` command to include `-ldflags "-X agent-cli/internal/version.version={{.VERSION}}"`.
 - Define `VERSION` variable using `git describe --tags --always --dirty` (with a fallback to `dev`).
 - **Deps**: none.
 - **Finish line**: Running `task build` produces a binary; executing `./bin/agent-cli version` prints a version string derived from the git tag or commit hash (not `dev`).
 
-[ ] **T2.2**: Validation checkpoint — build with injection and verify output
+[X] **T2.2**: Validation checkpoint — build with injection and verify output
 - Run `task build`.
 - Execute `./bin/agent-cli version` and assert output matches pattern `agent-cli version .+` (non-empty, non-dev).
 - Run `go test ./...` to confirm no regressions.
