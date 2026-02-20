@@ -31,5 +31,5 @@ constant or version command.
 [X] Add unit tests in `agent-cli/internal/cli/version_test.go` to verify the output
     format of `VersionCommand()`.
 
-[ ] Run `go build` and `go test ./...` inside `agent-cli/` to verify everything
+[X] Run `go build` and `go test ./...` inside `agent-cli/` to verify everything
     compiles and passes.
