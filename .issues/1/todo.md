@@ -77,7 +77,7 @@
 
 ## SR1 — Code review fixes
 
-[ ] **T3.1**: Propagate `fmt.Fprintf` error in `VersionCommand`
+[X] **T3.1**: Propagate `fmt.Fprintf` error in `VersionCommand`
 - Edit `@agent-cli/internal/cli/version.go`.
 - Capture the error returned by `fmt.Fprintf` and return it wrapped with `fmt.Errorf("write version: %w", err)` when non-nil.
 - Remove the unconditional `return nil` and replace with proper error propagation.

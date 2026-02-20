@@ -9,10 +9,10 @@ import (
 
 // VersionCommand writes the application version to w.
 func VersionCommand(w io.Writer) error {
-	// #TODO(agent): fmt.Fprintf error is silently discarded. Propagate the write error
-	// instead of unconditionally returning nil. Use fmt.Errorf("write version: %w", err)
-	// to wrap the error if non-nil.
-	fmt.Fprintf(w, "agent-cli version %s\n", version.Version())
+	_, err := fmt.Fprintf(w, "agent-cli version %s\n", version.Version())
+	if err != nil {
+		return fmt.Errorf("write version: %w", err)
+	}
 
 	return nil
 }
