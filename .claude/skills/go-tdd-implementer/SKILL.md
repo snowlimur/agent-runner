@@ -64,14 +64,15 @@ Execute this step ONLY when all tasks in the Active Stage are marked as done (`[
   - Exclude unrelated pre-existing repository changes.
 - Stage only those files explicitly: `git add -- {file1} {file2} ...`
 - Create a Conventional Commit message for the completed stage:
-  - Subject format: `{type}(issue:{id}): complete stage {stage_id}`.
+  - Subject format: `{type}(issue:{id}): {short description}`.
   - Choose `{type}` (`feat`, `fix`, `refactor`, `test`, `chore`) based on the overall stage changes.
   - Body must summarize the key features and tasks completed in this stage.
   - Example:
-    - Subject: `feat(issue:{id}): {short description}`
+    - Subject: `feat(issue:{id}): implement version command`
     - Body: `Implemented core data structures and interfaces for the user service.`
 - Commit with subject and body: `git commit -m "{subject}" -m "{body}"`
 - Push: `git push origin issue/{id}`
+- If the commit or push fails for any reason, return EXACTLY: `{"status":"failed","reason":"<short reason>"}` and STOP.
 
 -# Step 5: Check Next Stages
 Check the TODO file for any remaining stages:

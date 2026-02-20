@@ -5,7 +5,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["todo_not_empty", "done", "todo_missing", "failed"]
+      "enum": ["fixes_needed", "done", "failed"]
     },
     "reason": {
       "type": "string"

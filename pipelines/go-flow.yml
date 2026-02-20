@@ -61,7 +61,7 @@ nodes:
       - when: 'decision.status == "todo_not_empty"'
         to: implementer
       - when: 'decision.status == "done"'
-        to: success
+        to: reviewer
 
   reviewer:
     run:
@@ -70,6 +70,8 @@ nodes:
       decision:
         schema_file: ./pipelines/schemas/reviewer.schema.json
     transitions:
+      - when: 'decision.status == "failed"'
+        to: fail
       - when: 'decision.status == "fixes_needed"'
         to: implementer
       - when: 'decision.status == "done"'

@@ -67,6 +67,7 @@ If issues were found and tasks/comments were generated:
 - Commit the changes using a Conventional Commit message:
   `git commit -m "review(issue:{id}): add code review feedback and fix tasks"`
 - Push the changes to the current branch.
+- If the commit or push fails for any reason, return EXACTLY: `{"status":"failed","reason":"<short reason>"}` and STOP.
 - Return EXACTLY: `{"status":"fixes_needed"}` and STOP.
 
 -# Step 6: Create PR and Return Success
@@ -77,7 +78,11 @@ If the audit passes perfectly and NO fixes are needed:
    - The **PR title** MUST reflect the essence of the introduced changes based on the completed tasks in `todo.md` (e.g., `feat(issue:{id}): add user authentication and JWT middleware`).
    - The **PR body** MUST contain a brief summary describing all the specific modifications and features implemented in this branch.
    Example: `gh pr create --title "{type}(issue:{id}): {meaningful_title_from_todo}" --body "{brief_summary_of_all_changes}" --assignee "{github_handle}"`
+- If the PR creation fails for any reason, return EXACTLY: `{"status":"failed","reason":"<short reason>"}` and STOP.
 4. Return EXACTLY: `{"status":"done"}` and STOP.
+
+## Failure Behavior
+- On any blocker (commit failure, push failure, PR creation failure) return `{"status":"failed","reason":"<short reason>"}` and STOP.
 
 ## Output Rules
 - Final response in the chat MUST be exactly one JSON object.

@@ -55,6 +55,7 @@ Execute via terminal:
 - `git add .issues/{id}/todo.md`
 - `git commit -m "plan(issue:{id}): create todo checklist"`
 - `git push -u origin issue/{id}` (or `git push origin issue/{id}` if upstream already configured)
+- If the commit or push fails for any reason, return EXACTLY: `{"status":"failed","reason":"<short reason>"}` and STOP.
 
 -# Step 6: Return Success
 Return exactly: `{"status":"created"}`.
