@@ -72,3 +72,13 @@
 - Run `go vet ./...` — zero warnings.
 - Run `go test ./...` — all tests green.
 - **Pass criteria:** exit code 0 for all three commands.
+
+---
+
+## SR1 — Code review fixes
+
+[ ] **T3.1**: Propagate `fmt.Fprintf` error in `VersionCommand`
+- Edit `@agent-cli/internal/cli/version.go`.
+- Capture the error returned by `fmt.Fprintf` and return it wrapped with `fmt.Errorf("write version: %w", err)` when non-nil.
+- Remove the unconditional `return nil` and replace with proper error propagation.
+- **Pass criteria:** `go vet ./...` passes; `go test ./...` passes; `VersionCommand` returns a non-nil error when the underlying writer fails.
