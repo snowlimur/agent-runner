@@ -10,6 +10,8 @@ import (
 	"agent-cli/internal/cli"
 )
 
+var version = "dev" //nolint:gochecknoglobals // overridden via -ldflags at build time
+
 const minArgsWithCommand = 2
 
 func main() {
@@ -40,6 +42,8 @@ func run() error {
 		return cli.RunCommand(ctx, cwd, args)
 	case "stats":
 		return cli.StatsCommand(cwd, args)
+	case "version":
+		return cli.VersionCommand(version, args)
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -55,5 +59,6 @@ func printUsage() {
   agent-cli run [--json] [--model sonnet|opus] [--debug] --file <path>
   agent-cli run [--json] [--model sonnet|opus] [--debug] --pipeline <path> [--var KEY=VALUE ...]
   agent-cli stats [--json]
+  agent-cli version    Print application version
 `)
 }
