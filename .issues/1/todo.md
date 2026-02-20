@@ -1,19 +1,35 @@
 # Issue #1 — Add app version command
 
-Reference: https://github.com/snowlimur/agent-runner/issues/1
+GitHub: https://github.com/snowlimur/agent-runner/issues/1
 
-## Context
+## Summary
 
-The Go CLI (`agent-cli`) dispatches commands via a switch statement in `agent-cli/main.go`.
-Existing commands (`run`, `stats`, `help`) live in `agent-cli/internal/cli/`.
-The `StatsCommand` in `stats.go` is the simplest pattern to follow for a new command.
-Currently there is no version tracking in the Go CLI.
+Add a `version` command to `agent-cli` that displays the current application version.
+The Go CLI (`agent-cli/`) uses a switch-based command dispatcher in `main.go` with
+command handlers defined as functions in `internal/cli/`. There is currently no version
+constant or version command.
 
-## Tasks
+## Implementation Checklist
 
-[ ] Define a version variable in `agent-cli/internal/cli/version.go` (new file) with a `var Version = "dev"` that can be overridden via `-ldflags` at build time
-[ ] Implement `VersionCommand(args []string) error` in `agent-cli/internal/cli/version.go` following the `StatsCommand` pattern — support `--json` flag, print `agent-cli version <ver>` by default
-[ ] Register the `version` command in the switch statement in `agent-cli/main.go` (`case "version"` → `cli.VersionCommand(args)`)
+[ ] Define a `Version` variable in `agent-cli/internal/cli/version.go` that can be
+    overridden at build time via `-ldflags` (default to `"dev"`).
+
+[ ] Implement `VersionCommand()` in `agent-cli/internal/cli/version.go` that prints
+    the version string to stdout (format: `agent-cli version <version>`).
+    Support `--json` flag following the `StatsCommand` pattern.
+
+[ ] Register the `version` command in the switch statement in `agent-cli/main.go`
+    (handle `"version"`, `"--version"`, and `"-v"` cases).
+
 [ ] Update `printUsage()` in `agent-cli/main.go` to include `agent-cli version [--json]`
-[ ] Add build-time version injection to `agent-cli/Taskfile.yml` via `-ldflags "-X agent-cli/internal/cli.Version={{.VERSION}}"`
-[ ] Verify the build compiles: `cd agent-cli && go build ./...`
+    in the usage text.
+
+[ ] Update `agent-cli/Taskfile.yml` build task to inject the version via
+    `-ldflags "-X agent-cli/internal/cli.Version=<version>"` using a git tag or
+    a hardcoded value.
+
+[ ] Add unit tests in `agent-cli/internal/cli/version_test.go` to verify the output
+    format of `VersionCommand()`.
+
+[ ] Run `go build` and `go test ./...` inside `agent-cli/` to verify everything
+    compiles and passes.
