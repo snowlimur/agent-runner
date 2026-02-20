@@ -40,6 +40,8 @@ func run() error {
 		return cli.RunCommand(ctx, cwd, args)
 	case "stats":
 		return cli.StatsCommand(cwd, args)
+	case "version", "--version", "-v":
+		return cli.VersionCommand(args)
 	case "help", "-h", "--help":
 		printUsage()
 		return nil

@@ -18,7 +18,7 @@ constant or version command.
     the version string to stdout (format: `agent-cli version <version>`).
     Support `--json` flag following the `StatsCommand` pattern.
 
-[ ] Register the `version` command in the switch statement in `agent-cli/main.go`
+[X] Register the `version` command in the switch statement in `agent-cli/main.go`
     (handle `"version"`, `"--version"`, and `"-v"` cases).
 
 [ ] Update `printUsage()` in `agent-cli/main.go` to include `agent-cli version [--json]`
