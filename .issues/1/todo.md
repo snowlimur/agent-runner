@@ -6,7 +6,7 @@
 
 ## S1: Version Package & Command
 
-[ ] **T1.1**: Create version package with build-time variable `@agent-cli/internal/version/version.go`
+[X] **T1.1**: Create version package with build-time variable `@agent-cli/internal/version/version.go`
 - Define package `version` with an unexported module-level variable `version` (type `string`, default `"dev"`).
 - Define `func Info() string` that returns the version string.
 - The `version` variable must be settable via `-ldflags "-X agent-cli/internal/version.version=v1.2.3"`.
@@ -20,7 +20,7 @@
   ```
   **Finish line**: `go test ./internal/version/...` passes; `version.Info()` returns `"dev"` when no ldflags are set.
 
-[ ] **T1.2**: Create `VersionCommand` function `@agent-cli/internal/cli/version.go`
+[X] **T1.2**: Create `VersionCommand` function `@agent-cli/internal/cli/version.go`
 - Define `func VersionCommand(args []string) error`.
 - The function prints `agent-cli version <version>` to `os.Stdout` and returns `nil`.
 - Accept an `io.Writer` parameter for testability: `func VersionCommand(w io.Writer, args []string) error`.
@@ -34,7 +34,7 @@
   ```
   **Finish line**: `go test ./internal/cli/... -run TestVersionCommand` passes; output matches expected format exactly.
 
-[ ] **T1.3**: Register `version` command in `main.go` `@agent-cli/main.go`
+[X] **T1.3**: Register `version` command in `main.go` `@agent-cli/main.go`
 - Add `case "version"` to the `switch` statement in `func run()`.
 - Route to `cli.VersionCommand(os.Stdout, args)`.
 - Update `printUsage()` to include `agent-cli version` line.
@@ -42,7 +42,7 @@
 - **Test**: N/A (integration verified in T1.4).
 - **Finish line**: `go build .` succeeds; running `./bin/agent-cli version` prints `agent-cli version dev`.
 
-[ ] **T1.4**: Validation checkpoint — compile and run full test suite
+[X] **T1.4**: Validation checkpoint — compile and run full test suite
 - Run `go build ./...` to verify zero compilation errors.
 - Run `go test ./...` to verify all existing and new tests pass.
 - Run `go vet ./...` to verify no vet warnings.
