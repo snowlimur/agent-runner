@@ -11,7 +11,7 @@ constant or version command.
 
 ## Implementation Checklist
 
-[ ] Define a `Version` variable in `agent-cli/internal/cli/version.go` that can be
+[X] Define a `Version` variable in `agent-cli/internal/cli/version.go` that can be
     overridden at build time via `-ldflags` (default to `"dev"`).
 
 [ ] Implement `VersionCommand()` in `agent-cli/internal/cli/version.go` that prints
