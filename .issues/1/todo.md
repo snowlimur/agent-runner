@@ -21,7 +21,7 @@ constant or version command.
 [X] Register the `version` command in the switch statement in `agent-cli/main.go`
     (handle `"version"`, `"--version"`, and `"-v"` cases).
 
-[ ] Update `printUsage()` in `agent-cli/main.go` to include `agent-cli version [--json]`
+[X] Update `printUsage()` in `agent-cli/main.go` to include `agent-cli version [--json]`
     in the usage text.
 
 [ ] Update `agent-cli/Taskfile.yml` build task to inject the version via
