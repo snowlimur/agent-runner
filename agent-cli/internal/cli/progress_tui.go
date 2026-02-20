@@ -119,15 +119,9 @@ type progressTUIModel struct {
 }
 
 type pipelineStageState struct {
-	ID             string
-	Mode           string
-	Status         string
-	TaskCount      int
-	CompletedTasks int
-	FailedTasks    int
-	DurationMS     int64
-	TaskOrder      []string
-	Tasks          map[string]*pipelineTaskState
+	ID        string
+	TaskOrder []string
+	Tasks     map[string]*pipelineTaskState
 }
 
 type pipelineTaskState struct {
@@ -208,7 +202,7 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finalRecord = typed.Record
 		if typed.Record != nil {
 			if typed.Record.Pipeline == nil {
-				stage := m.ensureStage("run")
+				m.ensureStage("run")
 				task := m.ensureSimpleRunTask("")
 				task.Done = true
 				task.Status = normalizeStatus(string(typed.Record.Status), "success")
@@ -226,11 +220,6 @@ func (m progressTUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				task.ActiveSteps = map[string]activeStep{}
 				task.StepOrder = task.StepOrder[:0]
-				stage.Status = task.Status
-				stage.CompletedTasks = stageTotalCount(stage)
-				if strings.EqualFold(task.Status, "error") {
-					stage.FailedTasks = 1
-				}
 			} else if strings.TrimSpace(m.planStatus) == "" {
 				m.planStatus = normalizeStatus(typed.Record.Pipeline.Status, "success")
 				if m.stageCount == 0 {
@@ -338,9 +327,7 @@ func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
 			m.stageCount = event.NodeCount
 		}
 	case "node_start":
-		stage := m.ensureStage(event.NodeID)
-		stage.Mode = strings.TrimSpace(event.Kind)
-		stage.Status = "running"
+		m.ensureStage(event.NodeID)
 		task := m.ensureTask(event.NodeID, event.NodeRunID)
 		task.Started = true
 		task.Status = "running"
@@ -543,10 +530,6 @@ func (m *progressTUIModel) handleResultEvent(event *result.AgentResult) {
 
 func (m *progressTUIModel) ensureSimpleRunTask(sessionID string) *pipelineTaskState {
 	stage := m.ensureStage("run")
-	stage.Status = normalizeStatus(stage.Status, "running")
-	if stage.TaskCount == 0 {
-		stage.TaskCount = 1
-	}
 	task := m.ensureTask(stage.ID, "prompt")
 	task.Started = true
 
@@ -598,9 +581,6 @@ func (m *progressTUIModel) ensureTask(stageID string, taskID string) *pipelineTa
 		}
 		stage.Tasks[normalizedTaskID] = task
 		stage.TaskOrder = append(stage.TaskOrder, normalizedTaskID)
-		if len(stage.TaskOrder) > stage.TaskCount {
-			stage.TaskCount = len(stage.TaskOrder)
-		}
 	}
 	return task
 }
@@ -697,14 +677,7 @@ func (m *progressTUIModel) renderTree() []string {
 			stageIndent = "   "
 		}
 
-		stageLine := fmt.Sprintf(
-			"%s %s · %s · %d/%d tasks",
-			stageBranch,
-			stage.ID,
-			stageDisplayStatus(stage),
-			stageCompletedCount(stage),
-			stageTotalCount(stage),
-		)
+		stageLine := fmt.Sprintf("%s %s", stageBranch, stage.ID)
 		lines = append(lines, stageLine)
 
 		taskOrder := stage.TaskOrder
@@ -788,6 +761,7 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 	totalCacheReadTokens := int64(0)
 	totalOutputTokens := int64(0)
 	totalTokens := int64(0)
+	totalDurationMS := int64(0)
 	totalCostUSD := float64(0)
 
 	for _, nodeRun := range m.finalRecord.Pipeline.NodeRuns {
@@ -806,12 +780,16 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 			costUSD = nodeRun.Normalized.CostUSD
 		}
 		rowTotalTokens := inputTokens + cacheCreateTokens + cacheRead + outputTokens
+		rowDurationMS := nodeRun.DurationMS
 		if liveTask != nil {
 			if rowTotalTokens == 0 {
 				rowTotalTokens = liveTask.Tokens
 			}
 			if cacheRead == 0 {
 				cacheRead = liveTask.CacheReadTokens
+			}
+			if rowDurationMS == 0 {
+				rowDurationMS = liveTask.DurationMS
 			}
 			if nodeRun.Normalized == nil {
 				costUSD = liveTask.CostUSD
@@ -823,11 +801,12 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 		totalCacheReadTokens += cacheRead
 		totalOutputTokens += outputTokens
 		totalTokens += rowTotalTokens
+		totalDurationMS += rowDurationMS
 		totalCostUSD += costUSD
 
 		rows = append(rows, []string{
 			formatStepName(nodeRun.NodeID, nodeRun.NodeRunID),
-			normalizeStatus(nodeRun.Status, "unknown"),
+			formatStatusWithDuration(nodeRun.Status, "unknown", rowDurationMS),
 			fmt.Sprintf("%d", inputTokens),
 			fmt.Sprintf("%d", cacheCreateTokens),
 			fmt.Sprintf("%d", cacheRead),
@@ -839,7 +818,7 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 
 	rows = append(rows, []string{
 		"Total",
-		"",
+		formatDurationMS(totalDurationMS),
 		fmt.Sprintf("%d", totalInputTokens),
 		fmt.Sprintf("%d", totalCacheCreateTokens),
 		fmt.Sprintf("%d", totalCacheReadTokens),
@@ -948,64 +927,12 @@ func normalizeStatus(status string, fallback string) string {
 	return normalized
 }
 
-func stageTotalCount(stage *pipelineStageState) int {
-	if stage == nil {
-		return 0
+func formatStatusWithDuration(status string, fallback string, durationMS int64) string {
+	formattedStatus := normalizeStatus(status, fallback)
+	if durationMS <= 0 {
+		return formattedStatus
 	}
-	if stage.TaskCount > 0 {
-		return stage.TaskCount
-	}
-	return len(stage.TaskOrder)
-}
-
-func stageCompletedCount(stage *pipelineStageState) int {
-	if stage == nil {
-		return 0
-	}
-	if stage.CompletedTasks > 0 {
-		return stage.CompletedTasks
-	}
-
-	completed := 0
-	for _, taskID := range stage.TaskOrder {
-		task := stage.Tasks[taskID]
-		if task != nil && task.Done {
-			completed++
-		}
-	}
-	return completed
-}
-
-func stageDisplayStatus(stage *pipelineStageState) string {
-	if stage == nil {
-		return "pending"
-	}
-	status := strings.ToLower(strings.TrimSpace(stage.Status))
-	if status != "" {
-		return status
-	}
-
-	if stageCompletedCount(stage) == 0 {
-		return "pending"
-	}
-
-	failed := 0
-	for _, taskID := range stage.TaskOrder {
-		task := stage.Tasks[taskID]
-		if task == nil {
-			continue
-		}
-		if task.Done && strings.EqualFold(strings.TrimSpace(task.Status), "error") {
-			failed++
-		}
-	}
-	if failed > 0 {
-		return "error"
-	}
-	if stageCompletedCount(stage) >= stageTotalCount(stage) {
-		return "success"
-	}
-	return "running"
+	return formattedStatus + " (" + formatDurationMS(durationMS) + ")"
 }
 
 func taskDisplayStatus(task *pipelineTaskState) string {
@@ -1013,14 +940,7 @@ func taskDisplayStatus(task *pipelineTaskState) string {
 		return "pending"
 	}
 	if task.Done {
-		status := strings.ToLower(strings.TrimSpace(task.Status))
-		if status == "" {
-			return "success"
-		}
-		if task.DurationMS > 0 {
-			return status + " (" + formatDurationMS(task.DurationMS) + ")"
-		}
-		return status
+		return formatStatusWithDuration(task.Status, "success", task.DurationMS)
 	}
 	if task.Started {
 		return "running"

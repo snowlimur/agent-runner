@@ -35,12 +35,14 @@ func TestProgressTUIModelPipelineHierarchyAndTaskResult(t *testing.T) {
 	view := model.View()
 	assertContains(t, view, "Running pipeline")
 	assertContains(t, view, "main")
+	assertNotContains(t, view, "main ·")
 	assertContains(t, view, "task_1")
 	assertContains(t, view, "Bash: go test ./...")
 	assertContains(t, view, "task_2")
 	assertContains(t, view, "Task 2 completed")
 	assertContains(t, view, "All checks passed")
 	assertNotContains(t, view, "rg TODO -n")
+	assertNotContains(t, view, " tasks")
 	assertNotContains(t, view, "ctrl+o")
 }
 
@@ -226,8 +228,11 @@ func TestProgressTUIModelPipelineStatsTableIncludesUsageColumns(t *testing.T) {
 	assertContains(t, table, "TOTAL_TOKENS")
 	assertContains(t, table, "COST_USD")
 	assertContains(t, table, "dev/task_a")
-	assertContains(t, table, "success")
+	assertContains(t, table, "success (1.5s)")
 	assertContains(t, table, "Total")
+	if got := tableStatusByStep(t, table, "Total"); got != "1.5s" {
+		t.Fatalf("unexpected Total status: %q", got)
+	}
 	assertContains(t, table, "10")
 	assertContains(t, table, "1")
 	assertContains(t, table, "3")
@@ -259,6 +264,7 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 		Record: &stats.RunRecord{
 			Status: stats.RunStatusSuccess,
 			Normalized: result.NormalizedMetrics{
+				DurationMS:               5,
 				InputTokens:              10,
 				CacheCreationInputTokens: 1,
 				CacheReadInputTokens:     2,
@@ -286,7 +292,7 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 	assertContains(t, view, "TOTAL_TOKENS")
 	assertContains(t, view, "COST_USD")
 	assertContains(t, view, "run/prompt")
-	assertContains(t, view, "success")
+	assertContains(t, view, "success (5ms)")
 	assertContains(t, view, "10")
 	assertContains(t, view, "1")
 	assertContains(t, view, "2")
@@ -397,4 +403,23 @@ func assertNotContains(t *testing.T, output string, expected string) {
 	if strings.Contains(output, expected) {
 		t.Fatalf("expected output to not contain %q, got %q", expected, output)
 	}
+}
+
+func tableStatusByStep(t *testing.T, table string, step string) string {
+	t.Helper()
+	for _, line := range strings.Split(table, "\n") {
+		if !strings.Contains(line, " | ") {
+			continue
+		}
+		cells := strings.Split(line, " | ")
+		if len(cells) < 2 {
+			continue
+		}
+		if strings.TrimSpace(cells[0]) != step {
+			continue
+		}
+		return strings.TrimSpace(cells[1])
+	}
+	t.Fatalf("step %q not found in table: %q", step, table)
+	return ""
 }

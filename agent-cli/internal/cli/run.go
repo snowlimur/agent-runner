@@ -574,7 +574,7 @@ func runSummaryLines(record *stats.RunRecord) []string {
 	rows := [][]string{
 		{
 			simpleRunStepName,
-			string(record.Status),
+			formatStatusWithDuration(string(record.Status), "unknown", record.Normalized.DurationMS),
 			fmt.Sprintf("%d", record.Normalized.InputTokens),
 			fmt.Sprintf("%d", record.Normalized.CacheCreationInputTokens),
 			fmt.Sprintf("%d", record.Normalized.CacheReadInputTokens),
