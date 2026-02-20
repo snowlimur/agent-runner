@@ -580,6 +580,7 @@ func runSummaryLines(record *stats.RunRecord) []string {
 			fmt.Sprintf("%d", record.Normalized.CacheReadInputTokens),
 			fmt.Sprintf("%d", record.Normalized.OutputTokens),
 			fmt.Sprintf("%d", totalTokens),
+			formatCostUSD(record.Normalized.TotalCostUSD),
 		},
 	}
 	return renderTextTable(headers, rows)
@@ -596,7 +597,12 @@ func runStatsTableHeaders() []string {
 		"CACHE_READ",
 		"OUTPUT_TOKENS",
 		"TOTAL_TOKENS",
+		"COST_USD",
 	}
+}
+
+func formatCostUSD(value float64) string {
+	return fmt.Sprintf("%.6f", value)
 }
 
 func formatStepName(stageID string, taskID string) string {

@@ -224,17 +224,19 @@ func TestProgressTUIModelPipelineStatsTableIncludesUsageColumns(t *testing.T) {
 	assertContains(t, table, "CACHE_READ")
 	assertContains(t, table, "OUTPUT_TOKENS")
 	assertContains(t, table, "TOTAL_TOKENS")
+	assertContains(t, table, "COST_USD")
 	assertContains(t, table, "dev/task_a")
 	assertContains(t, table, "success")
+	assertContains(t, table, "Total")
 	assertContains(t, table, "10")
 	assertContains(t, table, "1")
 	assertContains(t, table, "3")
 	assertContains(t, table, "16")
 	assertContains(t, table, "2")
+	assertContains(t, table, "0.125000")
 	assertNotContains(t, table, "STAGE/TASK")
 	assertNotContains(t, table, "DURATION")
 	assertNotContains(t, table, "TOOL_USES")
-	assertNotContains(t, table, "COST_USD")
 }
 
 func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
@@ -261,6 +263,7 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 				CacheCreationInputTokens: 1,
 				CacheReadInputTokens:     2,
 				OutputTokens:             3,
+				TotalCostUSD:             0.1,
 			},
 		},
 	})
@@ -281,6 +284,7 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 	assertContains(t, view, "CACHE_READ")
 	assertContains(t, view, "OUTPUT_TOKENS")
 	assertContains(t, view, "TOTAL_TOKENS")
+	assertContains(t, view, "COST_USD")
 	assertContains(t, view, "run/prompt")
 	assertContains(t, view, "success")
 	assertContains(t, view, "10")
@@ -288,6 +292,7 @@ func TestProgressTUIModelNonPipelineSummaryFooter(t *testing.T) {
 	assertContains(t, view, "2")
 	assertContains(t, view, "3")
 	assertContains(t, view, "16")
+	assertContains(t, view, "0.100000")
 	assertNotContains(t, view, "status: success")
 	assertNotContains(t, view, "input_tokens: 10")
 	assertNotContains(t, view, "total_tokens: 16")

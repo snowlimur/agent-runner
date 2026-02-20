@@ -782,7 +782,14 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 		return renderTextTable(headers, nil)
 	}
 
-	rows := make([][]string, 0, len(m.finalRecord.Pipeline.NodeRuns))
+	rows := make([][]string, 0, len(m.finalRecord.Pipeline.NodeRuns)+1)
+	totalInputTokens := int64(0)
+	totalCacheCreateTokens := int64(0)
+	totalCacheReadTokens := int64(0)
+	totalOutputTokens := int64(0)
+	totalTokens := int64(0)
+	totalCostUSD := float64(0)
+
 	for _, nodeRun := range m.finalRecord.Pipeline.NodeRuns {
 		liveTask := m.lookupTask(nodeRun.NodeID, nodeRun.NodeRunID)
 
@@ -790,21 +797,33 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 		cacheCreateTokens := int64(0)
 		cacheRead := int64(0)
 		outputTokens := int64(0)
+		costUSD := float64(0)
 		if nodeRun.Normalized != nil {
 			inputTokens = nodeRun.Normalized.InputTokens
 			cacheCreateTokens = nodeRun.Normalized.CacheCreationInputTokens
 			cacheRead = nodeRun.Normalized.CacheReadInputTokens
 			outputTokens = nodeRun.Normalized.OutputTokens
+			costUSD = nodeRun.Normalized.CostUSD
 		}
-		totalTokens := inputTokens + cacheCreateTokens + cacheRead + outputTokens
+		rowTotalTokens := inputTokens + cacheCreateTokens + cacheRead + outputTokens
 		if liveTask != nil {
-			if totalTokens == 0 {
-				totalTokens = liveTask.Tokens
+			if rowTotalTokens == 0 {
+				rowTotalTokens = liveTask.Tokens
 			}
 			if cacheRead == 0 {
 				cacheRead = liveTask.CacheReadTokens
 			}
+			if nodeRun.Normalized == nil {
+				costUSD = liveTask.CostUSD
+			}
 		}
+
+		totalInputTokens += inputTokens
+		totalCacheCreateTokens += cacheCreateTokens
+		totalCacheReadTokens += cacheRead
+		totalOutputTokens += outputTokens
+		totalTokens += rowTotalTokens
+		totalCostUSD += costUSD
 
 		rows = append(rows, []string{
 			formatStepName(nodeRun.NodeID, nodeRun.NodeRunID),
@@ -813,9 +832,21 @@ func (m *progressTUIModel) renderPipelineStatsTable() []string {
 			fmt.Sprintf("%d", cacheCreateTokens),
 			fmt.Sprintf("%d", cacheRead),
 			fmt.Sprintf("%d", outputTokens),
-			fmt.Sprintf("%d", totalTokens),
+			fmt.Sprintf("%d", rowTotalTokens),
+			formatCostUSD(costUSD),
 		})
 	}
+
+	rows = append(rows, []string{
+		"Total",
+		"",
+		fmt.Sprintf("%d", totalInputTokens),
+		fmt.Sprintf("%d", totalCacheCreateTokens),
+		fmt.Sprintf("%d", totalCacheReadTokens),
+		fmt.Sprintf("%d", totalOutputTokens),
+		fmt.Sprintf("%d", totalTokens),
+		formatCostUSD(totalCostUSD),
+	})
 
 	return renderTextTable(headers, rows)
 }

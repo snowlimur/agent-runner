@@ -19,4 +19,4 @@ tasks:
 
   agent:
     cmds:
-      - agent-cli run --pipeline pipelines/issue-flow.yml --var TASK="1"
+      - agent-cli run --debug --pipeline pipelines/go-flow.yml --var TASK="1"

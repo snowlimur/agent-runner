@@ -34,7 +34,7 @@ nodes:
   planner:
     run:
       kind: agent
-      prompt: "/issue-planner {{TASK}}"
+      prompt: "/go-planner {{TASK}}"
       decision:
         schema_file: ./pipelines/schemas/planner.schema.json
     transitions:
@@ -50,7 +50,7 @@ nodes:
   implementer:
     run:
       kind: agent
-      prompt: "/issue-implementer {{TASK}}"
+      prompt: "/go-tdd-implementer {{TASK}}"
       decision:
         schema_file: ./pipelines/schemas/implementer.schema.json
     transitions:

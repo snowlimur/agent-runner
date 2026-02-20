@@ -68,6 +68,7 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	assertContains(t, output, "CACHE_READ")
 	assertContains(t, output, "OUTPUT_TOKENS")
 	assertContains(t, output, "TOTAL_TOKENS")
+	assertContains(t, output, "COST_USD")
 	assertContains(t, output, "run/prompt")
 	assertContains(t, output, "success")
 	assertContains(t, output, "10")
@@ -75,6 +76,7 @@ func TestRunCommandSuccessStream(t *testing.T) {
 	assertContains(t, output, "4")
 	assertContains(t, output, "5")
 	assertContains(t, output, "22")
+	assertContains(t, output, "0.500000")
 	assertNotContains(t, output, "status: success")
 	assertNotContains(t, output, "input_tokens: 10")
 	assertNotContains(t, output, "cache_creation_input_tokens: 3")
@@ -612,17 +614,19 @@ func TestRunCommandPipelineSummaryShowsTaskStatsTable(t *testing.T) {
 	writeTestConfig(t, cwd)
 
 	planPath := filepath.Join(cwd, "pipeline.yaml")
-	planContent := "version: v1\nstages:\n  - id: dev\n    mode: sequential\n    tasks:\n      - id: implement\n        prompt: hello\n"
+	planContent := "version: v1\nstages:\n  - id: dev\n    mode: sequential\n    tasks:\n      - id: task_a\n        prompt: hello a\n      - id: task_b\n        prompt: hello b\n"
 	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
 		t.Fatalf("write plan file: %v", err)
 	}
 
 	resultLineA := `{"type":"result","subtype":"success","is_error":false,"duration_ms":10,"duration_api_ms":12,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s1","total_cost_usd":0.1,"usage":{"input_tokens":10,"cache_creation_input_tokens":1,"cache_read_input_tokens":2,"output_tokens":3,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u1"}`
 	resultLineB := `{"type":"result","subtype":"success","is_error":false,"duration_ms":5,"duration_api_ms":6,"num_turns":1,"result":"ok","stop_reason":null,"session_id":"s2","total_cost_usd":0.05,"usage":{"input_tokens":4,"cache_creation_input_tokens":0,"cache_read_input_tokens":1,"output_tokens":2,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard"},"modelUsage":{},"uuid":"u2"}`
-	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":2,"node_run_count":2,"failed_node_count":0,"node_runs":[]}`
+	pipelineResultLine := `{"type":"pipeline_result","version":"v2","status":"success","is_error":false,"entry_node":"dev","terminal_node":"done","terminal_status":"success","exit_code":0,"iterations":2,"node_run_count":2,"failed_node_count":0,"node_runs":[{"node_id":"dev","node_run_id":"task_a-1","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:00Z","finished_at":"2026-02-16T00:00:01Z","duration_ms":1000,"error_message":""},{"node_id":"dev","node_run_id":"task_b-2","kind":"agent","status":"success","model":"opus","prompt_source":"prompt","prompt_file":"","cmd":"","cwd":"","exit_code":0,"signal":"","timed_out":false,"started_at":"2026-02-16T00:00:01Z","finished_at":"2026-02-16T00:00:02Z","duration_ms":1000,"error_message":""}]}`
 	lines := []string{
 		`{"type":"pipeline_event","event":"plan_start"}`,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_a-1","session_id":"s1"}`,
 		resultLineA,
+		`{"type":"pipeline_event","event":"node_session_bind","node_id":"dev","node_run_id":"task_b-2","session_id":"s2"}`,
 		resultLineB,
 		pipelineResultLine,
 	}
@@ -661,9 +665,16 @@ func TestRunCommandPipelineSummaryShowsTaskStatsTable(t *testing.T) {
 	assertContains(t, output, "CACHE_READ")
 	assertContains(t, output, "OUTPUT_TOKENS")
 	assertContains(t, output, "TOTAL_TOKENS")
+	assertContains(t, output, "COST_USD")
+	assertContains(t, output, "dev/task_a-1")
+	assertContains(t, output, "dev/task_b-2")
+	assertContains(t, output, "0.100000")
+	assertContains(t, output, "0.050000")
+	assertContains(t, output, "Total")
+	assertContains(t, output, "23")
+	assertContains(t, output, "0.150000")
 	assertNotContains(t, output, "STAGE/TASK")
 	assertNotContains(t, output, "TOOL_USES")
-	assertNotContains(t, output, "COST_USD")
 	assertNotContains(t, output, "run_id:")
 	assertNotContains(t, output, "stats_file:")
 	assertNotContains(t, output, "docker_exit_code:")
