@@ -42,7 +42,7 @@
 
 ## S2 — CLI integration and help text
 
-[ ] **T2.1**: Register `version` command in the main dispatcher
+[X] **T2.1**: Register `version` command in the main dispatcher
 - Edit `@agent-cli/main.go`.
 - Add `case "version":` to the existing command switch, calling `cli.VersionCommand(os.Stdout)`.
 - Add `case "-v", "--version":` mapping to the same handler so top-level version flag works.
@@ -57,7 +57,7 @@
   ```
 - **Pass criteria:** `go test ./...` passes; `agent-cli version` and `agent-cli --version` both print version string.
 
-[ ] **T2.2**: Update usage/help text
+[X] **T2.2**: Update usage/help text
 - Edit `@agent-cli/main.go` `printUsage()` function.
 - Add `version` command entry to the usage output (e.g., `  version     Show the application version`).
 - **Test signature (extend `@agent-cli/main_test.go`):**
@@ -67,7 +67,7 @@
   ```
 - **Pass criteria:** `agent-cli help` output includes the `version` command description.
 
-[ ] **T2.3**: Final validation checkpoint
+[X] **T2.3**: Final validation checkpoint
 - Run `go build ./...` — zero errors.
 - Run `go vet ./...` — zero warnings.
 - Run `go test ./...` — all tests green.
