@@ -81,6 +81,151 @@ func TestProgressTUIModelShowsAllActiveStepsWithoutExpandToggle(t *testing.T) {
 	assertContains(t, view, "Bash: rg TODO -n")
 }
 
+func TestProgressTUIModelRendersTransitionInlineAfterResult(t *testing.T) {
+	t.Parallel()
+
+	model := newProgressTUIModel(true, nil)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"plan_start","node_count":2}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_start","node_id":"issue_gate","node_run_id":"issue_gate-2","kind":"agent"}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_finish","node_id":"issue_gate","node_run_id":"issue_gate-2","status":"success","duration_ms":662}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"transition_taken","node_id":"issue_gate","node_run_id":"issue_gate-2","to_node":"planner","when":"run.exit_code == 0"}`,
+	)
+
+	view := model.View()
+	assertContains(t, view, "└─ -> planner (run.exit_code == 0)")
+	assertNotContains(t, view, "Transitions")
+
+	doneIndex := strings.Index(view, "Done")
+	transitionIndex := strings.Index(view, "-> planner (run.exit_code == 0)")
+	if doneIndex < 0 {
+		t.Fatalf("expected Done line in view: %q", view)
+	}
+	if transitionIndex < 0 {
+		t.Fatalf("expected transition line in view: %q", view)
+	}
+	if doneIndex > transitionIndex {
+		t.Fatalf("expected transition after Done, got view: %q", view)
+	}
+}
+
+func TestProgressTUIModelRendersTransitionWithoutCondition(t *testing.T) {
+	t.Parallel()
+
+	model := newProgressTUIModel(true, nil)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_start","node_id":"issue_gate","node_run_id":"issue_gate-2","kind":"agent"}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_finish","node_id":"issue_gate","node_run_id":"issue_gate-2","status":"success","duration_ms":662}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"transition_taken","node_id":"issue_gate","node_run_id":"issue_gate-2","to_node":"planner","when":"   "}`,
+	)
+
+	view := model.View()
+	assertContains(t, view, "└─ -> planner")
+	assertNotContains(t, view, "-> planner (")
+}
+
+func TestProgressTUIModelTransitionFallsBackToLastStageTask(t *testing.T) {
+	t.Parallel()
+
+	model := newProgressTUIModel(true, nil)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_start","node_id":"main","node_run_id":"task_1","kind":"agent"}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_finish","node_id":"main","node_run_id":"task_1","status":"success","duration_ms":100}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_start","node_id":"main","node_run_id":"task_2","kind":"agent"}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_finish","node_id":"main","node_run_id":"task_2","status":"success","duration_ms":100}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"transition_taken","node_id":"main","node_run_id":"","to_node":"next","when":"run.exit_code == 0"}`,
+	)
+
+	view := model.View()
+	transitionText := "-> next (run.exit_code == 0)"
+	taskOneIndex := strings.Index(view, "task_1 ·")
+	taskTwoIndex := strings.Index(view, "task_2 ·")
+	transitionIndex := strings.Index(view, transitionText)
+	if taskOneIndex < 0 || taskTwoIndex < 0 || transitionIndex < 0 {
+		t.Fatalf("expected both tasks and transition in view: %q", view)
+	}
+	if transitionIndex < taskTwoIndex {
+		t.Fatalf("expected transition to attach to last task, got view: %q", view)
+	}
+	if strings.Contains(view[taskOneIndex:taskTwoIndex], transitionText) {
+		t.Fatalf("expected no transition under task_1, got view: %q", view)
+	}
+}
+
+func TestProgressTUIModelSkipsDuplicateConsecutiveTaskTransitions(t *testing.T) {
+	t.Parallel()
+
+	model := newProgressTUIModel(true, nil)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_start","node_id":"issue_gate","node_run_id":"issue_gate-2","kind":"agent"}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"node_finish","node_id":"issue_gate","node_run_id":"issue_gate-2","status":"success","duration_ms":662}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"transition_taken","node_id":"issue_gate","node_run_id":"issue_gate-2","to_node":"planner","when":"run.exit_code == 0"}`,
+	)
+	model = applyStreamLine(
+		t,
+		model,
+		`{"type":"pipeline_event","event":"transition_taken","node_id":"issue_gate","node_run_id":"issue_gate-2","to_node":"planner","when":"run.exit_code == 0"}`,
+	)
+
+	view := model.View()
+	transitionText := "-> planner (run.exit_code == 0)"
+	if count := strings.Count(view, transitionText); count != 1 {
+		t.Fatalf("expected a single transition line, got %d in view: %q", count, view)
+	}
+}
+
 func TestProgressTUIModelCtrlCInterruptsAndQuits(t *testing.T) {
 	t.Parallel()
 

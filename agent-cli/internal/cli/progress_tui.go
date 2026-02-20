@@ -111,7 +111,6 @@ type progressTUIModel struct {
 	toolTaskByKey          map[string]taskRef
 	toolUseIDByToolKey     map[string]string
 	pendingOutcomeBySessID map[string]taskOutcome
-	transitionLines        []string
 	nonJSONLogCount        int
 
 	finalRecord *stats.RunRecord
@@ -144,8 +143,9 @@ type pipelineTaskState struct {
 	Started bool
 	Done    bool
 
-	ActiveSteps map[string]activeStep
-	StepOrder   []string
+	ActiveSteps     map[string]activeStep
+	StepOrder       []string
+	TransitionLines []string
 }
 
 type activeStep struct {
@@ -170,7 +170,6 @@ func newProgressTUIModel(pipelineHint bool, cancelRun context.CancelFunc) progre
 		toolTaskByKey:          map[string]taskRef{},
 		toolUseIDByToolKey:     map[string]string{},
 		pendingOutcomeBySessID: map[string]taskOutcome{},
-		transitionLines:        make([]string, 0, 16),
 		cancelRun:              cancelRun,
 	}
 
@@ -254,11 +253,6 @@ func (m progressTUIModel) View() string {
 	}
 
 	lines = append(lines, m.renderTree()...)
-	if len(m.transitionLines) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, "Transitions")
-		lines = append(lines, m.transitionLines...)
-	}
 
 	if m.nonJSONLogCount > 0 {
 		lines = append(lines, "")
@@ -384,17 +378,16 @@ func (m *progressTUIModel) handlePipelineEvent(event *result.PipelineEvent) {
 		m.planStatus = normalizeStatus(event.Status, "success")
 		m.stageCount = len(m.stageOrder)
 	case "transition_taken":
-		fromNode := strings.TrimSpace(event.FromNode)
+		stageID := strings.TrimSpace(event.NodeID)
 		toNode := strings.TrimSpace(event.ToNode)
-		when := strings.TrimSpace(event.When)
-		if fromNode == "" || toNode == "" {
+		if stageID == "" || toNode == "" {
 			return
 		}
-		line := fmt.Sprintf("%s -> %s", fromNode, toNode)
-		if when != "" {
-			line = line + " when " + when
+		task := m.resolveTransitionTask(stageID, event.NodeRunID)
+		if task == nil {
+			return
 		}
-		m.transitionLines = append(m.transitionLines, line)
+		task.addTransitionLine(formatTransitionLine(toNode, event.When))
 	}
 }
 
@@ -573,11 +566,12 @@ func (m *progressTUIModel) ensureTask(stageID string, taskID string) *pipelineTa
 	task := stage.Tasks[normalizedTaskID]
 	if task == nil {
 		task = &pipelineTaskState{
-			StageID:     stage.ID,
-			TaskID:      normalizedTaskID,
-			Status:      "pending",
-			ActiveSteps: map[string]activeStep{},
-			StepOrder:   make([]string, 0, 8),
+			StageID:         stage.ID,
+			TaskID:          normalizedTaskID,
+			Status:          "pending",
+			ActiveSteps:     map[string]activeStep{},
+			StepOrder:       make([]string, 0, 8),
+			TransitionLines: make([]string, 0, 4),
 		}
 		stage.Tasks[normalizedTaskID] = task
 		stage.TaskOrder = append(stage.TaskOrder, normalizedTaskID)
@@ -732,6 +726,12 @@ func (m *progressTUIModel) renderTree() []string {
 					}
 					lines = append(lines, renderedResult)
 				}
+				for _, transitionLine := range task.TransitionLines {
+					if strings.TrimSpace(transitionLine) == "" {
+						continue
+					}
+					lines = append(lines, taskIndent+"└─ "+transitionLine)
+				}
 				continue
 			}
 
@@ -838,6 +838,34 @@ func (m *progressTUIModel) lookupTask(stageID, taskID string) *pipelineTaskState
 	return stage.Tasks[strings.TrimSpace(taskID)]
 }
 
+func (m *progressTUIModel) resolveTransitionTask(stageID string, taskID string) *pipelineTaskState {
+	normalizedStageID := strings.TrimSpace(stageID)
+	if normalizedStageID == "" {
+		return nil
+	}
+	stage := m.stages[normalizedStageID]
+	if stage == nil {
+		return nil
+	}
+
+	normalizedTaskID := strings.TrimSpace(taskID)
+	if normalizedTaskID != "" {
+		task := stage.Tasks[normalizedTaskID]
+		if task != nil {
+			return task
+		}
+	}
+
+	if len(stage.TaskOrder) == 0 {
+		return nil
+	}
+	lastTaskID := strings.TrimSpace(stage.TaskOrder[len(stage.TaskOrder)-1])
+	if lastTaskID == "" {
+		return nil
+	}
+	return stage.Tasks[lastTaskID]
+}
+
 func (m *progressTUIModel) effectiveStageCount() int {
 	if m.stageCount > 0 {
 		return m.stageCount
@@ -895,6 +923,17 @@ func (task *pipelineTaskState) activeStepLines() []string {
 	return lines
 }
 
+func (task *pipelineTaskState) addTransitionLine(line string) {
+	normalizedLine := strings.TrimSpace(line)
+	if normalizedLine == "" {
+		return
+	}
+	if len(task.TransitionLines) > 0 && task.TransitionLines[len(task.TransitionLines)-1] == normalizedLine {
+		return
+	}
+	task.TransitionLines = append(task.TransitionLines, normalizedLine)
+}
+
 func applyTaskOutcome(task *pipelineTaskState, tokens int64, cacheRead int64, cost float64, resultText string) {
 	if task == nil {
 		return
@@ -917,6 +956,18 @@ func mergeResultText(current string, incoming string) string {
 		return current
 	}
 	return current + "\n" + trimmedIncoming
+}
+
+func formatTransitionLine(toNode string, when string) string {
+	normalizedToNode := strings.TrimSpace(toNode)
+	if normalizedToNode == "" {
+		return ""
+	}
+	normalizedWhen := strings.TrimSpace(when)
+	if normalizedWhen == "" {
+		return "-> " + normalizedToNode
+	}
+	return "-> " + normalizedToNode + " (" + normalizedWhen + ")"
 }
 
 func normalizeStatus(status string, fallback string) string {
