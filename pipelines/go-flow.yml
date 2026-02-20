@@ -63,8 +63,14 @@ nodes:
       - when: 'decision.status == "done"'
         to: success
 
-  needs_spec:
-    terminal: true
-    terminal_status: success
-    exit_code: 0
-    message: "Issue has needs-spec label. Development is skipped."
+  reviewer:
+    run:
+      kind: agent
+      prompt: "/go-code-reviewer {{TASK}}"
+      decision:
+        schema_file: ./pipelines/schemas/reviewer.schema.json
+    transitions:
+      - when: 'decision.status == "fixes_needed"'
+        to: implementer
+      - when: 'decision.status == "done"'
+        to: success
