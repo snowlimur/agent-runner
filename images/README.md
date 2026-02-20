@@ -112,7 +112,10 @@ The runtime entrypoint in the image is compiled JavaScript:
 1. Parses args (`--debug`, `--model`, `--pipeline`, task args).
 2. Copies source from `SOURCE_WORKSPACE_DIR` (default `/workspace-source`) into writable `/workspace`.
 3. Configures global git settings:
-   - `url."https://github.com/".insteadOf="ssh://git@github.com/"`;
+   - `url."https://github.com/".insteadOf` for:
+     - `ssh://git@github.com/`
+     - `git@github.com:`
+     - `ssh://git@github.com:`
    - `user.name` from `GIT_USER_NAME` / `GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` (fallback: `Claude Code Agent`);
    - `user.email` from `GIT_USER_EMAIL` / `GIT_AUTHOR_EMAIL` / `GIT_COMMITTER_EMAIL` (fallback: `claude-bot@local.docker`);
    - `safe.directory=/workspace`.

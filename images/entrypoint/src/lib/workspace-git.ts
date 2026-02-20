@@ -47,7 +47,7 @@ export function prepareWorkspaceFromReadOnlySource(debugEnabled: boolean): void 
   debugLog(debugEnabled, "Workspace is ready in /workspace.");
 }
 
-export function configureGit(): void {
+export function configureGit(debugEnabled: boolean): void {
   const gitUserName = firstNonEmptyEnv(
     ["GIT_USER_NAME", "GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"],
     "Claude Code Agent",
@@ -57,12 +57,28 @@ export function configureGit(): void {
     "claude-bot@local.docker",
   );
 
+  debugLog(debugEnabled, "Configuring git URL rewrites for GitHub HTTPS...");
   runSync("git", [
     "config",
     "--global",
     'url.https://github.com/.insteadOf',
     "ssh://git@github.com/",
   ]);
+  runSync("git", [
+    "config",
+    "--global",
+    "--add",
+    'url.https://github.com/.insteadOf',
+    "git@github.com:",
+  ]);
+  runSync("git", [
+    "config",
+    "--global",
+    "--add",
+    'url.https://github.com/.insteadOf',
+    "ssh://git@github.com:",
+  ]);
+  debugLog(debugEnabled, "Configuring git user and safe.directory...");
   runSync("git", ["config", "--global", "user.name", gitUserName]);
   runSync("git", ["config", "--global", "user.email", gitUserEmail]);
   runSync("git", ["config", "--global", "--add", "safe.directory", TARGET_WORKSPACE_DIR]);

@@ -13,28 +13,21 @@ limits:
 nodes:
   prepare_branch:
     run:
-      kind: agent
-      prompt: "/prepare-branch {{TASK}}"
-      decision:
-        schema_file: ./pipelines/schemas/prepare-branch.schema.json
+      kind: command
+      cmd: "node ./pipelines/scripts/prepare-branch.js {{TASK}}"
+      cwd: "."
     transitions:
-      - when: 'run.status == "error"'
-        to: fail
-      - when: 'decision.status == "failed"'
-        to: fail
-      - when: 'decision.status == "branch_ready"'
+      - when: "run.exit_code == 0"
         to: issue_gate
 
   issue_gate:
     run:
       kind: command
-      cmd: "bash ./pipelines/scripts/issue-gate.sh"
+      cmd: "node ./pipelines/scripts/issue-gate.js"
       cwd: "."
     transitions:
       - when: "run.exit_code == 0"
         to: planner
-      - when: "run.exit_code == 10"
-        to: needs_spec
       - when: "run.exit_code != 0"
         to: fail
 
@@ -51,6 +44,8 @@ nodes:
         to: fail
       - when: 'decision.status == "done"'
         to: implementer
+      - when: 'decision.status == "created"'
+        to: implementer
 
   implementer:
     run:
@@ -59,8 +54,6 @@ nodes:
       decision:
         schema_file: ./pipelines/schemas/implementer.schema.json
     transitions:
-      - when: 'run.status == "error"'
-        to: fail
       - when: 'decision.status == "failed"'
         to: fail
       - when: 'decision.status == "todo_missing"'

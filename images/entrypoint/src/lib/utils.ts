@@ -55,7 +55,7 @@ export function sleepMs(milliseconds: number): void {
 
 export function debugLog(debugEnabled: boolean, message: string): void {
   if (debugEnabled) {
-    console.log(message);
+    process.stderr.write(`[debug] ${message}\n`);
   }
 }
 

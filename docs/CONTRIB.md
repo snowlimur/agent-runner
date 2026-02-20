@@ -71,7 +71,7 @@ agent-cli stats --json
 Notes on `--var`:
 - Only valid with `--pipeline`
 - Repeatable; key must match `^[A-Z][A-Z0-9_]*$`
-- Applies to inline `nodes.<id>.run.prompt` only (not `prompt_file`)
+- Applies to inline `nodes.<id>.run.prompt` and `nodes.<id>.run.cmd` (not `prompt_file`)
 - Run fails fast for missing, unused, or duplicate vars
 
 ## Testing

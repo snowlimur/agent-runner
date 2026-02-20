@@ -209,14 +209,14 @@ function resolveLimits(rawPlan: Record<string, unknown>): PipelineLimits {
   };
 }
 
-function applyInlinePromptTemplate(
-  prompt: string,
+function applyInlineTemplate(
+  value: string,
   nodeID: string,
   templateVars: Readonly<Record<string, string>>,
   usedTemplateVars: Set<string>,
 ): string {
   const missingVars = new Set<string>();
-  const replaced = prompt.replace(TEMPLATE_PLACEHOLDER_PATTERN, (_match, rawName: unknown) => {
+  const replaced = value.replace(TEMPLATE_PLACEHOLDER_PATTERN, (_match, rawName: unknown) => {
     const name = String(rawName ?? "");
     usedTemplateVars.add(name);
     if (!Object.prototype.hasOwnProperty.call(templateVars, name)) {
@@ -364,7 +364,7 @@ function resolveAgentRun(
     }
     promptText = content.trim();
   } else {
-    promptText = applyInlinePromptTemplate(promptValue, nodeID, templateVars, usedTemplateVars);
+    promptText = applyInlineTemplate(promptValue, nodeID, templateVars, usedTemplateVars);
   }
 
   if (!promptText.trim()) {
@@ -388,10 +388,22 @@ function resolveAgentRun(
   };
 }
 
-function resolveCommandRun(nodeID: string, rawRun: Record<string, unknown>, defaults: PipelineDefaults): PipelineCommandRun {
+function resolveCommandRun(
+  nodeID: string,
+  rawRun: Record<string, unknown>,
+  defaults: PipelineDefaults,
+  templateVars: Readonly<Record<string, string>>,
+  usedTemplateVars: Set<string>,
+): PipelineCommandRun {
+  const rawCommand = requireNonEmptyString(rawRun.cmd, `nodes.${nodeID}.run.cmd`);
+  const command = applyInlineTemplate(rawCommand, nodeID, templateVars, usedTemplateVars);
+  if (!command.trim()) {
+    throw new PipelinePlanError(`Command is empty for node ${nodeID}.`);
+  }
+
   return {
     kind: "command",
-    cmd: requireNonEmptyString(rawRun.cmd, `nodes.${nodeID}.run.cmd`),
+    cmd: command,
     cwd: resolveCommandCWD(rawRun.cwd, `nodes.${nodeID}.run.cwd`),
     timeoutSec: parsePositiveInteger(rawRun.timeout_sec, defaults.commandTimeoutSec),
   };
@@ -440,7 +452,7 @@ function resolveNode(
     kind === "agent"
       ? resolveAgentRun(nodeID, rawRun, defaults, templateVars, usedTemplateVars)
       : kind === "command"
-      ? resolveCommandRun(nodeID, rawRun, defaults)
+      ? resolveCommandRun(nodeID, rawRun, defaults, templateVars, usedTemplateVars)
       : (() => {
           throw new PipelinePlanError(`nodes.${nodeID}.run.kind must be one of: agent, command.`);
         })();

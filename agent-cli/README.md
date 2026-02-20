@@ -76,19 +76,19 @@ Run with prompt file:
 agent-cli run --file ./prompt.txt
 ```
 
-Run pipeline with template vars for inline `prompt` placeholders:
+Run pipeline with template vars for inline `prompt` and `cmd` placeholders:
 
 ```bash
 agent-cli run --pipeline ./plan.yml --var A_VAR="service-a" --var B_VAR="staging"
 ```
 
 `--var` is supported only with `--pipeline` and may be repeated.
-Placeholder format in inline task prompt is strict: `{{A_VAR}}` (UPPER_SNAKE only).
+Placeholder format in inline task `prompt` and command `cmd` is strict: `{{A_VAR}}` (UPPER_SNAKE only).
 `prompt_file` content is not templated.
 `--debug` is forwarded into the container entrypoint and enables extra initialization logs.
 
 Validation rules:
-- missing placeholder variable -> run fails with `Missing template vars for <stage>/<task>: ...`
+- missing placeholder variable -> run fails with `Missing template vars for <node_id>: ...`
 - unused `--var` key -> run fails with `Unused template vars: ...`
 - duplicate or invalid key -> argument parse error
 

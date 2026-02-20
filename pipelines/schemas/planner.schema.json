@@ -5,7 +5,7 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["done", "fail"]
+      "enum": ["created", "done", "fail"]
     },
     "reason": {
       "type": "string"

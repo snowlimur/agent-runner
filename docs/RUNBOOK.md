@@ -142,7 +142,7 @@ Missing template vars for <node_id>: ...
 Unused template vars: ...
 ```
 
-Every `{{UPPER_SNAKE}}` placeholder in inline `prompt` fields must have a matching `--var KEY=value`. Extra `--var` keys that are not used also fail. `prompt_file` content is not templated.
+Every `{{UPPER_SNAKE}}` placeholder in inline `prompt` or `cmd` fields must have a matching `--var KEY=value`. Extra `--var` keys that are not used also fail. `prompt_file` content is not templated.
 
 ### Run idle timeout
 

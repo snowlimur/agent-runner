@@ -100,7 +100,7 @@ Validates YAML v2 graph DSL at startup (fail-fast):
 - Terminal nodes: `terminal: true`, `terminal_status`, `exit_code`, `message`
 - Built-in terminal nodes: `success` and `fail` are always present; explicit override is allowed only as terminal nodes
 - `entry` cannot be `success` or `fail`
-- Template var substitution for inline `prompt` fields (`{{UPPER_SNAKE}}`)
+- Template var substitution for inline `prompt` and `cmd` fields (`{{UPPER_SNAKE}}`)
 - Schema loading: reads + parses `decision.schema_file` JSON for each agent node
 
 ### Pipeline Executor (`pipeline-executor.ts`)
