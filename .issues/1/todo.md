@@ -7,7 +7,7 @@
 
 ## S1 — Version infrastructure and command implementation
 
-[ ] **T1.1**: Create version variable with build-time injection support
+[X] **T1.1**: Create version variable with build-time injection support
 - Create `@agent-cli/internal/version/version.go`.
 - Define package `version` with an unexported module-level `var version string` and a public `func Version() string` that returns it (defaulting to `"dev"` when unset).
 - The variable is populated at build time via `-ldflags "-X <module>/internal/version.version=<semver>"`.
@@ -19,7 +19,7 @@
   ```
 - **Pass criteria:** `go test ./internal/version/...` passes; `Version()` returns `"dev"`.
 
-[ ] **T1.2**: Implement `VersionCommand` function
+[X] **T1.2**: Implement `VersionCommand` function
 - Create `@agent-cli/internal/cli/version.go`.
 - Signature: `func VersionCommand(w io.Writer) error`.
 - Accepts an `io.Writer` to enable testable output capture.
@@ -33,7 +33,7 @@
   ```
 - **Pass criteria:** `go test ./internal/cli/...` passes; output format verified.
 
-[ ] **T1.3**: Compilation and test checkpoint for S1
+[X] **T1.3**: Compilation and test checkpoint for S1
 - Run `go build ./...` from `agent-cli/` — must compile with zero errors.
 - Run `go test ./internal/version/... ./internal/cli/...` — all tests green.
 - **Pass criteria:** exit code 0 for both commands.
