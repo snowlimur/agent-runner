@@ -24,7 +24,7 @@ constant or version command.
 [X] Update `printUsage()` in `agent-cli/main.go` to include `agent-cli version [--json]`
     in the usage text.
 
-[ ] Update `agent-cli/Taskfile.yml` build task to inject the version via
+[X] Update `agent-cli/Taskfile.yml` build task to inject the version via
     `-ldflags "-X agent-cli/internal/cli.Version=<version>"` using a git tag or
     a hardcoded value.
 
