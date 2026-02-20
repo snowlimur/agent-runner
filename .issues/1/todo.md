@@ -14,7 +14,7 @@ constant or version command.
 [X] Define a `Version` variable in `agent-cli/internal/cli/version.go` that can be
     overridden at build time via `-ldflags` (default to `"dev"`).
 
-[ ] Implement `VersionCommand()` in `agent-cli/internal/cli/version.go` that prints
+[X] Implement `VersionCommand()` in `agent-cli/internal/cli/version.go` that prints
     the version string to stdout (format: `agent-cli version <version>`).
     Support `--json` flag following the `StatsCommand` pattern.
 
