@@ -27,6 +27,12 @@ const SYSTEM_ERROR_INVALID_PLAN = 2;
 const SYSTEM_ERROR_NO_TRANSITION = 3;
 const SYSTEM_ERROR_LIMIT_REACHED = 4;
 const SYSTEM_ERROR_NODE_EXECUTION = 5;
+const AUTHENTICATION_FAILED_ERROR_CODE = "authentication_failed";
+const STREAM_LOOP_DETECTED_ERROR_CODE = "stream_loop_detected";
+const STREAM_LOOP_THRESHOLD = 3;
+const STOP_HOOK_FEEDBACK_MARKER = "Stop hook feedback:";
+const STOP_HOOK_STRUCTURED_OUTPUT_MARKER = "You MUST call the StructuredOutput tool";
+const STREAM_LOOP_DETECTED_MESSAGE = `repeated assistant-error/stop-hook cycle (${STREAM_LOOP_THRESHOLD}x)`;
 
 function emitPipelineEvent<TEvent extends PipelineEventName>(
   event: TEvent,
@@ -77,6 +83,12 @@ interface ClaudeResultEvent {
   structured_output?: unknown;
 }
 
+interface AssistantStreamError {
+  code: string;
+  message: string;
+  fingerprint: string;
+}
+
 function extractFinalResultEvent(line: string): ClaudeResultEvent | null {
   const trimmed = String(line ?? "").trim();
   if (!trimmed || !trimmed.startsWith("{")) {
@@ -102,6 +114,94 @@ function extractFinalResultEvent(line: string): ClaudeResultEvent | null {
   }
 }
 
+function extractAssistantStreamError(line: string): AssistantStreamError | null {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed || !trimmed.startsWith("{")) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(trimmed) as unknown;
+    if (!isPlainObject(payload) || payload.type !== "assistant") {
+      return null;
+    }
+
+    const code = typeof payload.error === "string" ? payload.error.trim() : "";
+    if (!code) {
+      return null;
+    }
+
+    let message = "";
+    const rawMessage = payload.message;
+    if (isPlainObject(rawMessage) && Array.isArray(rawMessage.content)) {
+      for (const item of rawMessage.content) {
+        if (!isPlainObject(item)) {
+          continue;
+        }
+        if (item.type !== "text" || typeof item.text !== "string") {
+          continue;
+        }
+        const text = item.text.trim();
+        if (!text) {
+          continue;
+        }
+        message = text;
+        break;
+      }
+    }
+
+    if (!message) {
+      message = "assistant stream reported an error";
+    }
+
+    return {
+      code,
+      message,
+      fingerprint: `${code}:${message}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isSyntheticStopHookFeedback(line: string): boolean {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed || !trimmed.startsWith("{")) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(trimmed) as unknown;
+    if (!isPlainObject(payload) || payload.type !== "user" || payload.isSynthetic !== true) {
+      return false;
+    }
+
+    const rawMessage = payload.message;
+    if (!isPlainObject(rawMessage) || !Array.isArray(rawMessage.content)) {
+      return false;
+    }
+
+    for (const item of rawMessage.content) {
+      if (!isPlainObject(item)) {
+        continue;
+      }
+      if (item.type !== "text" || typeof item.text !== "string") {
+        continue;
+      }
+      if (
+        item.text.includes(STOP_HOOK_FEEDBACK_MARKER) &&
+        item.text.includes(STOP_HOOK_STRUCTURED_OUTPUT_MARKER)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function runClaudeProcess(
   args: readonly string[],
   options: RunClaudeProcessOptions = {},
@@ -122,6 +222,11 @@ export function runClaudeProcess(
     let closed = false;
     let idleTimer: NodeJS.Timeout | null = null;
     let forceKillTimer: NodeJS.Timeout | null = null;
+    let fatalErrorCode = "";
+    let fatalErrorMessage = "";
+    let pendingAssistantErrorFingerprint = "";
+    let lastCompletedCycleFingerprint = "";
+    let repeatedCycleCount = 0;
 
     const clearTimers = (): void => {
       if (idleTimer !== null) {
@@ -132,6 +237,82 @@ export function runClaudeProcess(
         clearTimeout(forceKillTimer);
         forceKillTimer = null;
       }
+    };
+
+    const scheduleForceKill = (): void => {
+      if (forceKillTimer !== null) {
+        clearTimeout(forceKillTimer);
+      }
+      forceKillTimer = setTimeout(() => {
+        if (closed) {
+          return;
+        }
+        child.kill("SIGKILL");
+      }, 10_000);
+    };
+
+    const terminateForFatalError = (code: string, message: string): void => {
+      const normalizedCode = code.trim();
+      if (!normalizedCode || fatalErrorCode) {
+        return;
+      }
+
+      fatalErrorCode = normalizedCode;
+      const normalizedMessage = message.trim();
+      fatalErrorMessage = normalizedMessage ? `${normalizedCode}: ${normalizedMessage}` : normalizedCode;
+
+      if (closed) {
+        return;
+      }
+
+      child.kill("SIGTERM");
+      scheduleForceKill();
+    };
+
+    const resetLoopGuard = (): void => {
+      pendingAssistantErrorFingerprint = "";
+      lastCompletedCycleFingerprint = "";
+      repeatedCycleCount = 0;
+    };
+
+    const inspectStdoutLine = (line: string): void => {
+      const assistantError = extractAssistantStreamError(line);
+      if (assistantError) {
+        pendingAssistantErrorFingerprint = assistantError.fingerprint;
+        if (assistantError.code === AUTHENTICATION_FAILED_ERROR_CODE) {
+          terminateForFatalError(assistantError.code, assistantError.message);
+        }
+        return;
+      }
+
+      if (isSyntheticStopHookFeedback(line)) {
+        if (!pendingAssistantErrorFingerprint) {
+          resetLoopGuard();
+          return;
+        }
+
+        if (pendingAssistantErrorFingerprint === lastCompletedCycleFingerprint) {
+          repeatedCycleCount += 1;
+        } else {
+          lastCompletedCycleFingerprint = pendingAssistantErrorFingerprint;
+          repeatedCycleCount = 1;
+        }
+
+        pendingAssistantErrorFingerprint = "";
+        if (repeatedCycleCount >= STREAM_LOOP_THRESHOLD) {
+          terminateForFatalError(STREAM_LOOP_DETECTED_ERROR_CODE, STREAM_LOOP_DETECTED_MESSAGE);
+        }
+        return;
+      }
+
+      if (pendingAssistantErrorFingerprint || lastCompletedCycleFingerprint || repeatedCycleCount > 0) {
+        resetLoopGuard();
+      }
+    };
+
+    const processStdoutLine = (line: string): void => {
+      inspectStdoutLine(line);
+      stdoutHook?.(line);
     };
 
     const scheduleIdleTimeout = (): void => {
@@ -151,13 +332,7 @@ export function runClaudeProcess(
         timedOut = true;
         onIdleTimeout?.(idleTimeoutMs);
         child.kill("SIGTERM");
-
-        forceKillTimer = setTimeout(() => {
-          if (closed) {
-            return;
-          }
-          child.kill("SIGKILL");
-        }, 10_000);
+        scheduleForceKill();
       }, idleTimeoutMs);
     };
 
@@ -171,8 +346,11 @@ export function runClaudeProcess(
       }
       const flushed = stdoutBuffer;
       stdoutBuffer = "";
-      stdoutHook?.(flushed.replace(/\r$/, ""));
-      process.stdout.write(flushed);
+      const line = flushed.replace(/\r$/, "");
+      processStdoutLine(line);
+      if (hasStdoutHook) {
+        process.stdout.write(flushed);
+      }
     };
 
     if (child.stdout) {
@@ -181,7 +359,6 @@ export function runClaudeProcess(
         markActivity();
         if (!hasStdoutHook) {
           process.stdout.write(chunk);
-          return;
         }
 
         stdoutBuffer += chunk;
@@ -194,8 +371,10 @@ export function runClaudeProcess(
           const lineWithNewline = stdoutBuffer.slice(0, lineEndIndex + 1);
           stdoutBuffer = stdoutBuffer.slice(lineEndIndex + 1);
           const line = lineWithNewline.slice(0, -1).replace(/\r$/, "");
-          stdoutHook(line);
-          process.stdout.write(lineWithNewline);
+          processStdoutLine(line);
+          if (hasStdoutHook) {
+            process.stdout.write(lineWithNewline);
+          }
         }
       });
     }
@@ -228,6 +407,8 @@ export function runClaudeProcess(
         signal: signal ?? "",
         timedOut,
         timeoutMessage,
+        fatalErrorCode,
+        fatalErrorMessage,
       });
     });
   });
@@ -530,12 +711,14 @@ async function executeAgentNode(
       signal: "",
       timedOut: false,
       timeoutMessage: "",
+      fatalErrorCode: "",
+      fatalErrorMessage: "",
     };
     executionError = error instanceof Error ? error.message : String(error);
   }
 
   let decision: JSONObject = {};
-  let errorMessage = executionError;
+  let errorMessage = executionError || processResult.fatalErrorMessage.trim();
 
   if (!errorMessage) {
     if (!hasFinalResult) {

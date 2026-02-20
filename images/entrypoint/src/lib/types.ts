@@ -105,6 +105,8 @@ export interface ClaudeProcessResult {
   signal: NodeJS.Signals | "";
   timedOut: boolean;
   timeoutMessage: string;
+  fatalErrorCode: string;
+  fatalErrorMessage: string;
 }
 
 export interface CommandProcessResult {
