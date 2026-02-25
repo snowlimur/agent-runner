@@ -43,9 +43,9 @@ nodes:
       - when: 'decision.status == "failed"'
         to: fail
       - when: 'decision.status == "done"'
-        to: implementer
+        to: success
       - when: 'decision.status == "created"'
-        to: implementer
+        to: success
 
   implementer:
     run:
