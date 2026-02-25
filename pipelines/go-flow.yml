@@ -34,7 +34,7 @@ nodes:
   planner:
     run:
       kind: agent
-      prompt: "/go-planner {{TASK}}"
+      prompt: "/planner {{TASK}}"
       decision:
         schema_file: ./pipelines/schemas/planner.schema.json
     transitions:
