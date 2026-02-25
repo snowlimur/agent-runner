@@ -40,6 +40,8 @@ func run() error {
 		return cli.RunCommand(ctx, cwd, args)
 	case "stats":
 		return cli.StatsCommand(cwd, args)
+	case "version", "-v", "--version":
+		return cli.VersionCommand(os.Stdout)
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -55,5 +57,6 @@ func printUsage() {
   agent-cli run [--json] [--model sonnet|opus] [--debug] --file <path>
   agent-cli run [--json] [--model sonnet|opus] [--debug] --pipeline <path> [--var KEY=VALUE ...]
   agent-cli stats [--json]
+  agent-cli version
 `)
 }
