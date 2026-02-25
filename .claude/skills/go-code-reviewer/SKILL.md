@@ -49,19 +49,19 @@ Read the corresponding `.issues/{id}/todo.md` file to understand the scope and e
 Do not just look at the last commit. Analyze ALL changes made in the current branch relative to its base branch (e.g., `main` or `master`):
 `git diff main...HEAD` (or equivalent branch comparison).
 
--# Step 2: Perform Code & Security Audit
+# Step 2: Perform Code & Security Audit
 Review the changed files against all Rules & Constraints (Concurrency, Memory, Error, Interface, Context, and Security).
+Use the Go rules in @.claude/rules directory to check the changes. 
 
--# Step 3: Apply Inline Feedback
+# Step 3: Apply Inline Feedback
 If issues are found, modify the corresponding code files by adding `#TODO(agent): [instruction]` comments right above the problematic lines.
 
--# Step 4: Generate Fix Tasks (Planner Style)
-If issues are found, you MUST update the planner's checklist at `.issues/{id}/todo.md` (if the file exists):
-- Group all necessary fixes into a new logically complete Stage called **SR{N}** (where N next available stage number).
-- Number the tasks according to the stage (e.g., `[ ] **T{N}.1**: Refactor sync.WaitGroup to errgroup in auth.go`).
+# Step 4: Generate Fix Tasks (Planner Style)
+If issues are found, you MUST update `.issues/{id}/tasks.md` and `.issues/{id}/implementation-plan.md` (if the files exists):
+- Group all necessary fixes into a new logically complete Phase.
 - Ensure every fix task has clear, binary (pass/fail) success criteria.
 
--# Step 5: Commit and Push Fixes
+# Step 5: Commit and Push Fixes
 If issues were found and tasks/comments were generated:
 - Stage the modified source files (containing `#TODO(agent)` comments) and `.issues/{id}/todo.md`.
 - Commit the changes using a Conventional Commit message:
@@ -72,10 +72,10 @@ If issues were found and tasks/comments were generated:
 
 -# Step 6: Create PR and Return Success
 If the audit passes perfectly and NO fixes are needed:
-1. Read the corresponding `.issues/{id}/todo.md` file to understand the scope and essence of the completed tasks.
+1. Read the corresponding `.issues/{id}/tasks.md` file to understand the scope and essence of the completed tasks.
 2. Identify the user on whose behalf the commits in this branch were made.
 3. Use the GitHub CLI (`gh`) to create a Pull Request explicitly assigned to that user (use `@me` if the commit author matches the authenticated `gh` user, or their specific GitHub handle).
-   - The **PR title** MUST reflect the essence of the introduced changes based on the completed tasks in `todo.md` (e.g., `feat(issue:{id}): add user authentication and JWT middleware`).
+   - The **PR title** MUST reflect the essence of the introduced changes based on the completed tasks in `tasks.md` (e.g., `feat(issue:{id}): add user authentication and JWT middleware`).
    - The **PR body** MUST contain a brief summary describing all the specific modifications and features implemented in this branch.
    Example: `gh pr create --title "{type}(issue:{id}): {meaningful_title_from_todo}" --body "{brief_summary_of_all_changes}" --assignee "{github_handle}"`
 - If the PR creation fails for any reason, return EXACTLY: `{"status":"failed","reason":"<short reason>"}` and STOP.
