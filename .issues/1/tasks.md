@@ -43,6 +43,25 @@ git-derived value; fall back to a sensible default (e.g. `dev`) when built witho
 
 ---
 
+### TASK-002: Fix test style violation in version_test.go
+
+**Description**: Refactor `TestVersionCommand` in `agent-cli/internal/cli/version_test.go` to use a table-driven pattern as required by T-1 (MUST).
+
+**Agent Type**: backend
+**Depends On**: TASK-001
+**Complexity**: low
+
+**Subtasks**:
+- [ ] Replace the two separate `t.Run` subtests with a single `tests` slice of structs
+- [ ] Iterate over `tests` with a single `for _, tt := range tests` loop containing one `t.Run` block
+
+**Definition of Done**:
+- [ ] `TestVersionCommand` uses a table-driven structure with a `tests` slice and a single loop
+- [ ] All tests pass with `-race` flag: `cd agent-cli && go test -race ./...`
+- [ ] `go vet ./...` exits 0
+
+---
+
 ## Risk Register
 
 | Risk                         | Impact | Probability | Mitigation                                                  | Affects Tasks |
