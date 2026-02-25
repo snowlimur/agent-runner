@@ -8,9 +8,12 @@ vars:
 tasks:
   build:
     desc: Build agent-cli binary into bin/
+    vars:
+      GIT_VERSION:
+        sh: git describe --tags --always --dirty 2>/dev/null || echo dev
     cmds:
       - mkdir -p {{.BUILD_DIR}}
-      - "go build -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
+      - "go build -ldflags \"-X main.Version={{.GIT_VERSION}}\" -o {{.BUILD_DIR}}/{{.BINARY_NAME}} ."
 
   test:
     desc: Run unit tests

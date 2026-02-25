@@ -10,6 +10,11 @@ import (
 	"agent-cli/internal/cli"
 )
 
+// Version is the application version. Set at build time via ldflags:
+//
+//	go build -ldflags "-X main.Version=v1.2.3"
+var Version = "dev" //nolint:gochecknoglobals // set at link time via -ldflags; never reassigned at runtime
+
 const minArgsWithCommand = 2
 
 func main() {
@@ -40,6 +45,8 @@ func run() error {
 		return cli.RunCommand(ctx, cwd, args)
 	case "stats":
 		return cli.StatsCommand(cwd, args)
+	case "version", "--version":
+		return cli.VersionCommand(os.Stdout, Version)
 	case "help", "-h", "--help":
 		printUsage()
 		return nil
@@ -55,5 +62,6 @@ func printUsage() {
   agent-cli run [--json] [--model sonnet|opus] [--debug] --file <path>
   agent-cli run [--json] [--model sonnet|opus] [--debug] --pipeline <path> [--var KEY=VALUE ...]
   agent-cli stats [--json]
+  agent-cli version
 `)
 }
