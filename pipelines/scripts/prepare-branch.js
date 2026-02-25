@@ -152,11 +152,8 @@ function main() {
       process.exit(0);
     }
 
-    if (hasLocalBranch("main")) {
-      runGit(["checkout", "main"]);
-      runGit(["pull", "--ff-only", "origin", "main"]);
-    } else {
-      fail("main branch does't exist");
+    if (hasUpstream()) {
+      runGit(["pull", "--ff-only"]);
     }
 
     runGit(["checkout", "-b", issueBranch]);
