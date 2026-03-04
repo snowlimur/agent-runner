@@ -1,1 +1,0 @@
-Print current golang version and include the exact `go version` output.

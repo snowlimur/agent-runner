@@ -31,7 +31,12 @@ Audit Go code for idiomatic correctness, performance bottlenecks, concurrency sa
 - Flag "God interfaces". Enforce the Interface Segregation Principle by requiring small, consumer-defined interfaces.
 
 ### 6. Context Audit
-- Reject any code that stores `context.Context` in a struct field.
+Reject any code that stores `context.Context` in a struct field.
+
+Exceptions — storing context in a struct is acceptable when:
+- The struct represents a single, short-lived operation (e.g., a request, a command)
+  and is created, used, and discarded within the same call chain.
+- The struct is not shared across goroutines or method calls with different lifetimes.
 
 ### 7. Security Audit (CRITICAL)
 - **Secrets & Credentials**: Strictly ensure no hardcoded passwords, API keys, tokens, or private keys are present in the committed files.
@@ -51,7 +56,7 @@ Do not just look at the last commit. Analyze ALL changes made in the current bra
 
 # Step 2: Perform Code & Security Audit
 Review the changed files against all Rules & Constraints (Concurrency, Memory, Error, Interface, Context, and Security).
-Use the Go rules in @.claude/rules directory to check the changes. 
+Use the Go rules in @.claude/rules directory to check the changes.
 
 # Step 3: Apply Inline Feedback
 If issues are found, modify the corresponding code files by adding `#TODO(agent): [instruction]` comments right above the problematic lines.
@@ -75,9 +80,9 @@ If the audit passes perfectly and NO fixes are needed:
 1. Read the corresponding `.issues/{id}/tasks.md` file to understand the scope and essence of the completed tasks.
 2. Identify the user on whose behalf the commits in this branch were made.
 3. Use the GitHub CLI (`gh`) to create a Pull Request explicitly assigned to that user (use `@me` if the commit author matches the authenticated `gh` user, or their specific GitHub handle).
-   - The **PR title** MUST reflect the essence of the introduced changes based on the completed tasks in `tasks.md` (e.g., `feat(issue:{id}): add user authentication and JWT middleware`).
-   - The **PR body** MUST contain a brief summary describing all the specific modifications and features implemented in this branch.
-   Example: `gh pr create --title "{type}(issue:{id}): {meaningful_title_from_todo}" --body "{brief_summary_of_all_changes}" --assignee "{github_handle}"`
+    - The **PR title** MUST reflect the essence of the introduced changes based on the completed tasks in `tasks.md` (e.g., `feat(issue:{id}): add user authentication and JWT middleware`).
+    - The **PR body** MUST contain a brief summary describing all the specific modifications and features implemented in this branch.
+      Example: `gh pr create --title "{type}(issue:{id}): {meaningful_title_from_todo}" --body "{brief_summary_of_all_changes}" --assignee "{github_handle}"`
 - If the PR creation fails for any reason, return EXACTLY: `{"status":"failed","reason":"<short reason>"}` and STOP.
 4. Return EXACTLY: `{"status":"done"}` and STOP.
 
